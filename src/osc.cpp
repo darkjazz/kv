@@ -1,0 +1,277 @@
+/*
+ *  osc.cpp
+ *  lambda
+ *
+ *  Created by alo on 07/11/2011.
+ *  
+ *	This file is part of lambda.
+ *
+ *	lambda is free software: you can redistribute it and/or modify
+ *	it under the terms of the GNU General Public License as published by
+ *	the Free Software Foundation, either version 3 of the License, or
+ *	(at your option) any later version.
+ 
+ *	lambda is distributed in the hope that it will be useful,
+ *	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *	GNU General Public License for more details.
+ 
+ *	You should have received a copy of the GNU General Public License
+ *	along with lambda.  If not, see <http://www.gnu.org/licenses/>. 
+ *
+ */
+
+#include "osc.h"
+
+void OSCMessenger::setUpSender() {
+    try {
+        _sender.bind();
+    }
+    catch ( const osc::Exception &ex ) {
+        CI_LOG_E( "Error binding: " << ex.what() << " val: " << ex.value() );
+        quit();
+    }
+}
+
+void OSCMessenger::sendAlive() {
+    osc::Message msg("/lambda/world/alive");
+    msg.append(_world->alive());
+    _sender.send(msg);
+}
+
+void OSCMessenger::sendStates() {
+    osc::Message msg("/lambda/world/states");
+    for (int i = 0; i < _world->getQueryStatesSize(); i++) {
+        msg.append(_world->getQueryStateAtIndex(i));
+    }
+    _sender.send(msg);
+}
+
+void OSCMessenger::sendFaderStates() {
+    osc::Message msg("/lambda/world/faderstates");
+    for (int i = 0; i < _world->getQueryStatesSize(); i++) {
+        msg.append(_world->getQueryFaderStateItem(i));
+    }
+    _sender.send(msg);
+}
+
+void OSCMessenger::sendCoordinatesByState() {
+    osc::Message msg("/lambda/world/coords");
+    for (int i = 0; i < _world->getQueryStatesSize(); i++) {
+        msg.append(_world->getQueryCoordAtIndex(i)); // Use append instead of addIntArg
+    }
+    _sender.send(msg);
+}
+
+void OSCMessenger::setUpListener() {
+    _listener.setListener( "/lambda/world/init",
+    [&]( const osc::Message &msg ){
+        _world->init(msg.getArgInt32(0), msg.getArgInt32(1), msg.getArgInt32(2), msg.getArgInt32(3));
+    });
+    _listener.setListener( "/lambda/world/interpl",
+    [&]( const osc::Message &msg ){
+        _world->setInterpolation((Interpolation)msg.getArgInt32(0), msg.getArgInt32(1));
+    });
+    _listener.setListener( "/lambda/world/somvector",
+    [&]( const osc::Message &msg ){
+        if (!_world->inputVectorUpdated() && !_world->newBMUFound() && _world->vectorSize() == msg.getNumArgs()) {
+            vector<double> inputVector;
+            for (int i = 0; i < _world->vectorSize(); i++) {
+                inputVector.push_back(msg.getArgFloat(i));
+            }
+            _world->setInputVector(inputVector);
+        }
+    });
+    _listener.setListener( "/lambda/world/rule/init",
+    [&]( const osc::Message &msg ){
+        _world->initRule((R)msg.getArgInt32(0));
+        _world->mapStates();
+    });
+    _listener.setListener( "/lambda/world/rule/births",
+    [&]( const osc::Message &msg ){
+        int *b;
+        b = new int[msg.getNumArgs()];
+        for (int i = 0; i < msg.getNumArgs(); i++) {
+            b[i] = msg.getArgInt32(i);
+        }
+        _world->rule()->setBirths(b);
+        delete [] b;
+    });
+    _listener.setListener( "/lambda/world/rule/survivals",
+    [&]( const osc::Message &msg ){
+        int *s;
+        s = new int[msg.getNumArgs()];
+        for (int i = 0; i < msg.getNumArgs(); i++) {
+            s[i] = msg.getArgInt32(i);
+        }
+        _world->rule()->setSurvivals(s);
+        delete [] s;
+    });
+    _listener.setListener( "/lambda/world/rule/states",
+    [&]( const osc::Message &msg ){
+        _world->rule()->setStates(msg.getArgInt32(0));
+    });
+    _listener.setListener( "/lambda/world/rule/add",
+    [&]( const osc::Message &msg ){
+        _world->rule()->setAdd((double)msg.getArgFloat(0));
+    });
+    _listener.setListener( "/lambda/world/rule/weights",
+    [&]( const osc::Message &msg ){
+        double* w;
+        w = new double[_world->rule()->nSize()];
+        for (int i = 0; i < _world->rule()->nSize(); i++) {
+            w[i] = (double)msg.getArgFloat(i);
+        }
+        _world->rule()->setWeights(w);
+        delete [] w;
+    });
+    _listener.setListener( "/lambda/world/reset/rand",
+    [&]( const osc::Message &msg ){
+        bool include = msg.getArgInt32(7) == 1;
+        _world->initRandInArea(
+            msg.getArgInt32(0),
+            msg.getArgInt32(1),
+            msg.getArgInt32(2),
+            msg.getArgInt32(3),
+            msg.getArgInt32(4),
+            msg.getArgInt32(5),
+            _world->rule()->numStates() - 1,
+            msg.getArgFloat(6),
+            include
+        );
+    });
+    _listener.setListener( "/lambda/world/reset/wirecube",
+    [&]( const osc::Message &msg ){
+        _world->initWireCube(
+            msg.getArgInt32(0),
+            msg.getArgInt32(1),
+            msg.getArgInt32(2),
+            msg.getArgInt32(3),
+            msg.getArgInt32(4),
+            msg.getArgInt32(5)
+        );
+    });
+    _listener.setListener( "/lambda/world/query/states",
+    [&]( const osc::Message &msg ){
+        int* ind;
+        ind = new int[msg.getNumArgs()];
+        for (int i = 0; i < msg.getNumArgs(); i++) {
+            ind[i] = msg.getArgInt32(i);
+        }
+        _world->setQueryIndices(ind, msg.getNumArgs());
+        delete [] ind;
+    });
+    _listener.setListener( "/lambda/world/query/coords",
+    [&]( const osc::Message &msg ){
+        _world->setQueryStates(msg.getArgInt32(0), msg.getArgInt32(1));
+    });
+    _listener.setListener( "/lambda/world/query/alive",
+    [&]( const osc::Message &msg ){
+        _world->startQuery();
+    });
+    _listener.setListener( "/lambda/world/query/stop",
+    [&]( const osc::Message &msg ){
+        _world->stopQuery();
+    });
+    _listener.setListener( "/lambda/world/symmetry",
+    [&]( const osc::Message &msg ){
+        _world->symmetry = (Sym)msg.getArgInt32(0);
+    });
+    _listener.setListener( "/lambda/graphics/rotate",
+    [&]( const osc::Message &msg ){
+        _ogl->rotateXYZ = vec3(
+            msg.getArgFloat(0),
+            msg.getArgFloat(1),
+            msg.getArgFloat(2)
+        );
+        _ogl->rotateAngle = msg.getArgFloat(3);
+    });
+    _listener.setListener( "/lambda/graphics/view",
+    [&]( const osc::Message &msg ){
+        _ogl->mEye = vec3(
+            msg.getArgFloat(0),
+            msg.getArgFloat(1),
+            msg.getArgFloat(2)
+        );
+        _ogl->mCenter = vec3(
+            msg.getArgFloat(3),
+            msg.getArgFloat(4),
+            msg.getArgFloat(5)
+        );
+    });
+    _listener.setListener( "/lambda/graphics/boidcam",
+    [&]( const osc::Message &msg ){
+        _ogl->attachEyeToFirstBoid = msg.getArgInt32(0) == 1;
+        _ogl->lookAtCentroid = msg.getArgInt32(1) == 1;
+    });
+    _listener.setListener( "/lambda/graphics/background",
+    [&]( const osc::Message &msg ){
+        _ogl->setBackground(
+            msg.getArgFloat(0),
+            msg.getArgFloat(1),
+            msg.getArgFloat(2)
+        );
+    });
+    _listener.setListener( "/lambda/graphics/pattern",
+    [&]( const osc::Message &msg ){
+        _ogl->patternLib[msg.getArgInt32(0)].active = msg.getArgInt32(1) == 1;
+        _ogl->patternLib[msg.getArgInt32(0)].alpha = msg.getArgFloat(2);
+        _ogl->patternLib[msg.getArgInt32(0)].colormap = msg.getArgInt32(3);
+        _ogl->patternLib[msg.getArgInt32(0)].alphamap = msg.getArgInt32(4);
+        _ogl->patternLib[msg.getArgInt32(0)].color.r = msg.getArgFloat(5);
+        _ogl->patternLib[msg.getArgInt32(0)].color.g = msg.getArgFloat(6);
+        _ogl->patternLib[msg.getArgInt32(0)].color.b = msg.getArgFloat(7);
+    });
+    _listener.setListener( "/lambda/graphics/boidpattern",
+    [&]( const osc::Message &msg ){
+        _ogl->boidPatternLib[msg.getArgInt32(0)].active = msg.getArgInt32(1) == 1;
+        _ogl->boidPatternLib[msg.getArgInt32(0)].mapIndex = msg.getArgInt32(2);
+    });
+    _listener.setListener( "/lambda/boids/init",
+    [&]( const osc::Message &msg ){
+        if (_boids) {
+            delete _boids;
+        }
+        _boids = new Boids(
+            msg.getArgInt32(0),
+            vec3(msg.getArgFloat(1), msg.getArgFloat(2), msg.getArgFloat(3)),
+            msg.getArgFloat(4),
+            msg.getArgFloat(5),
+            msg.getArgFloat(6),
+            msg.getArgFloat(7),
+            msg.getArgFloat(8)
+        );
+        _ogl->boids = _boids;
+    });
+    _listener.setListener( "/lambda/boids/set",
+    [&]( const osc::Message &msg ){
+        _boids->speed = msg.getArgFloat(0);
+        _boids->cohesion = msg.getArgFloat(1);
+        _boids->alignment = msg.getArgFloat(2);
+        _boids->separation = msg.getArgFloat(3);
+        _boids->center = msg.getArgFloat(4);
+    });
+    _listener.setListener( "/lambda/boids/kill",
+    [&]( const osc::Message &msg ){
+        delete _boids;
+        _boids = nullptr;
+        _ogl->boids = nullptr;
+    });
+    _listener.setListener( "/lambda/framerate",
+    [&]( const osc::Message &msg ){
+        setFrameRate(msg.getArgFloat(0));
+    });
+    _listener.setListener( "/lambda/quit",
+    [&]( const osc::Message &msg ){
+        _receivedQuit = true;
+    });
+    
+    try {
+        _listener.bind();
+    }
+    catch( const osc::Exception &ex ) {
+        CI_LOG_E( "Error binding: " << ex.what() << " val: " << ex.value() );
+        quit();
+    }
+
+}
