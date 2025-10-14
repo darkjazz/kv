@@ -18,6 +18,7 @@
 		00B9955B1B128DF400A5C623 /* IOSurface.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 00B995591B128DF400A5C623 /* IOSurface.framework */; };
 		5323E6B20EAFCA74003A9687 /* CoreVideo.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5323E6B10EAFCA74003A9687 /* CoreVideo.framework */; };
 		8D11072F0486CEB800E47090 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1058C7A1FEA54F0111CA2CBB /* Cocoa.framework */; };
+		9D108E2E2E9EC84B0009E68D /* pattern.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9D108E2D2E9EC84B0009E68D /* pattern.cpp */; };
 		9DFF34942D2071AE0062F5AD /* util.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9DFF34912D2071AE0062F5AD /* util.cpp */; };
 		9DFF34952D2071AE0062F5AD /* rule.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9DFF348F2D2071AE0062F5AD /* rule.cpp */; };
 		9DFF34962D2071AE0062F5AD /* ogl.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9DFF348D2D2071AE0062F5AD /* ogl.cpp */; };
@@ -45,6 +46,8 @@
 		5323E6B10EAFCA74003A9687 /* CoreVideo.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreVideo.framework; path = /System/Library/Frameworks/CoreVideo.framework; sourceTree = "<absolute>"; };
 		53676EF395E44636949A59D9 /* kv_Prefix.pch */ = {isa = PBXFileReference; lastKnownFileType = "\"\""; path = kv_Prefix.pch; sourceTree = "<group>"; };
 		8D1107320486CEB800E47090 /* kv.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = kv.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		9D108E2C2E9EC84B0009E68D /* pattern.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = pattern.h; path = ../src/pattern.h; sourceTree = SOURCE_ROOT; };
+		9D108E2D2E9EC84B0009E68D /* pattern.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = pattern.cpp; path = ../src/pattern.cpp; sourceTree = SOURCE_ROOT; };
 		9DFF348C2D2071AE0062F5AD /* ogl.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = ogl.h; path = ../src/ogl.h; sourceTree = SOURCE_ROOT; };
 		9DFF348D2D2071AE0062F5AD /* ogl.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ogl.cpp; path = ../src/ogl.cpp; sourceTree = SOURCE_ROOT; };
 		9DFF348E2D2071AE0062F5AD /* rule.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = rule.h; path = ../src/rule.h; sourceTree = SOURCE_ROOT; };
@@ -99,6 +102,8 @@
 		080E96DDFE201D6D7F000001 /* Source */ = {
 			isa = PBXGroup;
 			children = (
+				9D108E2C2E9EC84B0009E68D /* pattern.h */,
+				9D108E2D2E9EC84B0009E68D /* pattern.cpp */,
 				9DFF37172D5E82CB0062F5AD /* boids.h */,
 				9DFF37182D5E82CB0062F5AD /* boids.cpp */,
 				9DFF34982D4518E30062F5AD /* osc.h */,
@@ -264,6 +269,7 @@
 				9DFF34972D2071AE0062F5AD /* world.cpp in Sources */,
 				B39087D54A544185803EDE3A /* kvApp.cpp in Sources */,
 				9DFF37192D5E82CB0062F5AD /* boids.cpp in Sources */,
+				9D108E2E2E9EC84B0009E68D /* pattern.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -48,9 +48,16 @@ public:
         _receivedQuit = false;
         _isConnected = false;
         _boids = NULL;
+        
+//        setUpSender();
+        setUpListener();
     }
 
-    ~OSCMessenger() { if (_boids) delete _boids; }
+    ~OSCMessenger() {
+        if (_boids) delete _boids;
+        _listener.close();
+        _sender.close();
+    }
 
     void setUpSender();
     void setUpListener();

@@ -214,13 +214,15 @@ void OSCMessenger::setUpListener() {
     });
     _listener.setListener( "/lambda/graphics/pattern",
     [&]( const osc::Message &msg ){
-        _ogl->patternLib[msg.getArgInt32(0)].active = msg.getArgInt32(1) == 1;
-        _ogl->patternLib[msg.getArgInt32(0)].alpha = msg.getArgFloat(2);
-        _ogl->patternLib[msg.getArgInt32(0)].colormap = msg.getArgInt32(3);
-        _ogl->patternLib[msg.getArgInt32(0)].alphamap = msg.getArgInt32(4);
-        _ogl->patternLib[msg.getArgInt32(0)].color.r = msg.getArgFloat(5);
-        _ogl->patternLib[msg.getArgInt32(0)].color.g = msg.getArgFloat(6);
-        _ogl->patternLib[msg.getArgInt32(0)].color.b = msg.getArgFloat(7);
+        int patternId = msg.getArgInt32(0);
+        Pattern* pattern = _ogl->getPattern(patternId);
+        if (pattern) {
+            pattern->setActive(msg.getArgInt32(1) == 1);
+            pattern->setAlpha(msg.getArgFloat(2));
+            pattern->setColorMap(msg.getArgInt32(3));
+            pattern->setAlphaMap(msg.getArgInt32(4));
+            pattern->setColor(Color(msg.getArgFloat(5), msg.getArgFloat(6), msg.getArgFloat(7)));
+        }
     });
     _listener.setListener( "/lambda/graphics/boidpattern",
     [&]( const osc::Message &msg ){
@@ -273,5 +275,15 @@ void OSCMessenger::setUpListener() {
         CI_LOG_E( "Error binding: " << ex.what() << " val: " << ex.value() );
         quit();
     }
+
+    _listener.listen(
+    []( asio::error_code error, protocol::endpoint endpoint ) -> bool {
+        if( error ) {
+            CI_LOG_E( "Error Listening: " << error.message() << " val: " << error.value() << " endpoint: " << endpoint );
+            return false;
+        }
+        else
+            return true;
+    });
 
 }

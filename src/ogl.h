@@ -35,8 +35,10 @@
 #include "cinder/GeomIo.h"
 
 #include "world.h"
+#include "pattern.h"
 
 #include <vector>
+#include <memory>
 
 using namespace ci;
 using namespace ci::app;
@@ -45,18 +47,7 @@ using namespace std;
 const int numPatterns = 5;
 const int numBoidPatterns = 3;
 
-struct pattern {
-
-	bool active; 
-	double alpha;
-	int colormap;
-	int alphamap;
-	Color color;
-	
-	pattern(): active(false), alpha(0), colormap(0), alphamap(0) { color = Color(0.0, 0.0, 0.0); };
-	~pattern() {};
-};
-
+// Legacy struct for boid patterns (kept for compatibility)
 struct boidPattern {
     bool active;
     int mapIndex;
@@ -69,7 +60,10 @@ class GraphicsRenderer {
 
 public:
 	GraphicsRenderer(World* world) {
-		patternLib = new pattern[numPatterns];
+		// Initialize patterns using factory
+		for (int i = 0; i < numPatterns; i++) {
+			mPatterns.push_back(PatternFactory::create(i));
+		}
         boidPatternLib = new boidPattern[numBoidPatterns];
 		rotateXYZ = vec3( 1.0f, 0.0f, 0.0f);
 		rotateAngle = 0.0f;
@@ -87,10 +81,20 @@ public:
 	};
 	
 	~GraphicsRenderer() {
-		delete [] patternLib;
+		delete [] boidPatternLib;
 	};
-	
-	pattern* patternLib;	
+
+	// New pattern system
+	std::vector<std::unique_ptr<Pattern>> mPatterns;
+
+	// Legacy accessor for OSC compatibility
+	Pattern* getPattern(int id) {
+		if (id >= 0 && id < mPatterns.size()) {
+			return mPatterns[id].get();
+		}
+		return nullptr;
+	}
+
     boidPattern* boidPatternLib;
 
 	void setupOgl();
@@ -102,8 +106,15 @@ public:
 	void endDraw();
 	
 	void drawFragment(Cell*);
-		
+
 	void update();
+
+	// Instance rendering methods
+	void clearInstanceData();
+	void addCubeInstance(const vec3& position, const ColorA& color, const vec3& scale);
+	void addSphereInstance(const vec3& position, const ColorA& color, float radius);
+	void drawCubeInstances();
+	void drawSphereInstances();
 	
 	void setBackground(float r, float g, float b) {
 		_bgr = r; _bgg = g; _bgb = b;
@@ -131,7 +142,7 @@ public:
     int counter;
     
 private:
-	
+
 	double fragSizeX, fragSizeY, fragSizeZ, state;
 	float xL, yB, zF, xW, yH, zD, red, green, blue, alpha, maxphase;
 	int currentIndex, vectorSize;
@@ -139,10 +150,31 @@ private:
 	Cell* ptrBMU;
 	World* ptrWorld;
 	float _bgr, _bgg, _bgb;
-	float hx, hy; 
+	float hx, hy;
 	float blocx, blocy, blocz;
 
+    gl::VertBatchRef    mGrid;
+
 	GLfloat *rowVertices, *worldVertices, *rowNormals, *worldNormals, *rowColors, *worldColors;
+
+	// Instance data collections
+	std::vector<vec3> mCubePositions;
+	std::vector<ColorA> mCubeColors;
+	std::vector<vec3> mCubeScales;
+
+	std::vector<vec3> mSpherePositions;
+	std::vector<ColorA> mSphereColors;
+	std::vector<float> mSphereRadii;
+
+	// Instance rendering VBOs
+	gl::VboRef mCubeInstanceVbo;
+	gl::VboMeshRef mCubeMesh;
+	gl::BatchRef mCubeBatch;
+
+	gl::VboRef mSphereInstanceVbo;
+	gl::VboMeshRef mSphereMesh;
+	gl::BatchRef mSphereBatch;
+	gl::GlslProgRef mInstanceShader;
 	
 	
 	void pattern00(int, int, int);
@@ -162,6 +194,7 @@ private:
 	void fillRect (int);
 	
     void drawEdges(const std::vector<vec3>&);
+    void strokeRect(int, float, float, float, float, float);
     
 };
 
