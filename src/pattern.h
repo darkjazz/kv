@@ -40,9 +40,12 @@ class GraphicsRenderer;
 enum class RenderMode {
     CUBES,
     SPHERES,
+    CYLINDERS,
     LINES,
     PLANES,
     POINTS,
+    SPHERICAL_QUAD,  // Quad mapped to spherical coordinates
+    POLYGON,         // Smooth polygon with per-vertex colors
     CUSTOM
 };
 
@@ -64,12 +67,30 @@ struct RenderConfig {
     quat rotation = quat();
     float uniformScale = 1.0f;
 
+    // Line-specific (for RenderMode::LINES)
+    vec3 lineStart = vec3(0.0f);
+    vec3 lineEnd = vec3(0.0f);
+    float lineWidth = 1.0f;
+    bool lineSmooth = true;
+
+    // Spherical quad-specific (for RenderMode::SPHERICAL_QUAD)
+    float sphericalTheta = 0.0f;  // Azimuthal angle
+    float sphericalPhi = 0.0f;    // Polar angle
+    float sphericalRho = 1.0f;    // Radius
+    ivec2 sphericalGridPos = ivec2(0);  // Grid position for neighbor calc
+    ColorA sphericalCornerColors[4];    // Per-vertex colors for the quad
+    float sphericalCellState = 1.0f;    // Cell state for size variation
+
+    // Polygon-specific (for RenderMode::POLYGON)
+    vec3 polygonVertices[4];   // 4 vertices in world space
+    ColorA polygonColors[4];   // Per-vertex colors
+
     // Color & Material
     ColorA color = ColorA(1.0f, 1.0f, 1.0f, 1.0f);
     ColorA emissiveColor = ColorA(0.0f, 0.0f, 0.0f, 0.0f);
     float metallic = 0.0f;
     float roughness = 0.5f;
-    BlendMode blendMode = BlendMode::NORMAL;
+    BlendMode blendMode = BlendMode::SCREEN;
 
     // Texture Mapping
     gl::TextureRef texture = nullptr;
@@ -118,7 +139,7 @@ struct RenderConfig {
 class Pattern {
 public:
     Pattern(int id) : mId(id), mActive(false), mAlpha(1.0f),
-                      mColorMap(0), mAlphaMap(0), mColor(1.0f, 1.0f, 1.0f) {}
+                      mColorMap(0), mAlphaMap(0), mColor(1.0f, 1.0f, 1.0f), mAudioIntensity(0.0f) {}
 
     virtual ~Pattern() = default;
 
@@ -135,6 +156,10 @@ public:
 
     // Optional: Update per-frame animations
     virtual void update(float time, float dt) {}
+
+    // Audio reactivity control
+    void setAudioReactivity(float intensity) { mAudioIntensity = intensity; }
+    float getAudioReactivity() const { return mAudioIntensity; }
 
     // Pattern state
     void setActive(bool active) { mActive = active; }
@@ -161,6 +186,8 @@ protected:
     int mColorMap;
     int mAlphaMap;
     Color mColor;
+    float mTime = 0.0f;
+    float mAudioIntensity;  // 0.0 = no audio reactivity, 1.0 = full reactivity
 
     // Helper: Compute cell state value
     float getCellState(const Cell* cell, const World* world) const {
@@ -182,6 +209,42 @@ protected:
         float alpha = mAlpha * abs(mAlphaMap - state);
         return ColorA(red, green, blue, alpha);
     }
+
+    // Helper: Apply color mapping but use full alpha (no state modulation)
+    ColorA applyMappingWithFullAlpha(float state) const {
+        float red = mColor.r * abs(mColorMap - state);
+        float green = mColor.g * abs(mColorMap - state);
+        float blue = mColor.b * abs(mColorMap - state);
+        return ColorA(red, green, blue, mAlpha);  // Full alpha, no modulation
+    }
+
+    // Helper: Distance from world center
+    float distanceFromCenter(int x, int y, int z, const World* world) const {
+        World* w = const_cast<World*>(world);
+        float cx = w->sizeX() * 0.5f;
+        float cy = w->sizeY() * 0.5f;
+        float cz = w->sizeZ() * 0.5f;
+        float dx = x - cx;
+        float dy = y - cy;
+        float dz = z - cz;
+        return sqrt(dx*dx + dy*dy + dz*dz);
+    }
+
+    // Helper: Normalized distance from world center (0-1)
+    float normalizedDistance(int x, int y, int z, const World* world) const {
+        World* w = const_cast<World*>(world);
+        float cx = w->sizeX() * 0.5f;
+        float cy = w->sizeY() * 0.5f;
+        float cz = w->sizeZ() * 0.5f;
+        float maxDist = sqrt(cx*cx + cy*cy + cz*cz);
+        return distanceFromCenter(x, y, z, world) / maxDist;
+    }
+
+    // Helper: Get audio amplitude with intensity scaling
+    float getAudioAmplitude(const GraphicsRenderer* renderer) const;
+
+    // Helper: Get audio band (0=low, 1=mid, 2=high) with intensity scaling
+    float getAudioBand(const GraphicsRenderer* renderer, int band) const;
 };
 
 // Pattern factory for creating patterns by ID

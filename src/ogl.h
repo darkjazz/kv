@@ -44,7 +44,7 @@ using namespace ci;
 using namespace ci::app;
 using namespace std;
 
-const int numPatterns = 5;
+const int numPatterns = 10;
 const int numBoidPatterns = 3;
 
 // Legacy struct for boid patterns (kept for compatibility)
@@ -78,6 +78,10 @@ public:
 		blocx = 0.0f;
 		blocy = 0.0f;
 		blocz = 0.0f;
+		mAudioAmplitude = 0.0f;
+		mAudioLowBand = 0.0f;
+		mAudioMidBand = 0.0f;
+		mAudioHighBand = 0.0f;
 	};
 	
 	~GraphicsRenderer() {
@@ -111,11 +115,21 @@ public:
 
 	// Instance rendering methods
 	void clearInstanceData();
-	void addCubeInstance(const vec3& position, const ColorA& color, const vec3& scale);
-	void addSphereInstance(const vec3& position, const ColorA& color, float radius);
+	void addCubeInstance(const vec3& position, const ColorA& color, const vec3& scale, const gl::TextureRef& texture = nullptr);
+	void addSphereInstance(const vec3& position, const ColorA& color, float radius, int patternId = -1);
+	void addCylinderInstance(const vec3& position, const ColorA& color, const vec3& scale, const quat& rotation);
+	void addLineInstance(const vec3& start, const vec3& end, const ColorA& color, float width = 1.0f);
+	void addSphericalQuad(float theta, float phi, float rho, const ivec2& gridPos, const ColorA cornerColors[4], float cellState = 1.0f);
+	void addPlaneInstance(const vec3& position, const vec3& size, const ColorA& color, int planeType, bool wireframe);
 	void drawCubeInstances();
 	void drawSphereInstances();
-	
+	void drawCylinderInstances();
+	void drawLineInstances();
+	void drawSphericalQuads();
+	void drawPlaneInstances();
+	void addPolygonInstance(const vec3 vertices[4], const ColorA colors[4]);
+	void drawPolygonInstances();
+
 	void setBackground(float r, float g, float b) {
 		_bgr = r; _bgg = g; _bgb = b;
 	};
@@ -140,7 +154,15 @@ public:
     vec3 mLightLoc;
 	bool bLIGHT;
     int counter;
-    
+
+	// Audio reactivity from SOM vector
+	float mAudioAmplitude;    // Overall energy (sum of MFCC coefficients)
+	float mAudioLowBand;      // Low frequency band (MFCC 0-4)
+	float mAudioMidBand;      // Mid frequency band (MFCC 5-9)
+	float mAudioHighBand;     // High frequency band (MFCC 10+)
+
+	void updateAudioFeatures();  // Extract features from SOM vector
+
 private:
 
 	double fragSizeX, fragSizeY, fragSizeZ, state;
@@ -152,6 +174,7 @@ private:
 	float _bgr, _bgg, _bgb;
 	float hx, hy;
 	float blocx, blocy, blocz;
+	float mLastTime = 0.0f;
 
     gl::VertBatchRef    mGrid;
 
@@ -161,10 +184,48 @@ private:
 	std::vector<vec3> mCubePositions;
 	std::vector<ColorA> mCubeColors;
 	std::vector<vec3> mCubeScales;
+	std::vector<gl::TextureRef> mCubeTextures;
 
 	std::vector<vec3> mSpherePositions;
 	std::vector<ColorA> mSphereColors;
 	std::vector<float> mSphereRadii;
+	std::vector<int> mSpherePatternIds;  // Track which pattern each sphere belongs to
+
+	std::vector<vec3> mCylinderPositions;
+	std::vector<ColorA> mCylinderColors;
+	std::vector<vec3> mCylinderScales;
+	std::vector<quat> mCylinderRotations;
+
+	std::vector<vec3> mLineStarts;
+	std::vector<vec3> mLineEnds;
+	std::vector<ColorA> mLineColors;
+	std::vector<float> mLineWidths;
+
+	// Plane instance data (for Pattern08)
+	struct PlaneInstanceData {
+		vec3 position;  // Corner position
+		vec3 size;      // Width, height, depth
+		ColorA color;
+		int planeType;  // 0=XY, 1=YZ, 2=XZ
+		bool wireframe; // true for wireframe, false for filled
+	};
+	std::vector<PlaneInstanceData> mPlaneInstances;
+
+	// Polygon instance data (for Pattern09)
+	struct PolygonInstanceData {
+		vec3 vertices[4];     // 4 vertices in spherical coordinates
+		ColorA colors[4];     // Per-vertex colors
+	};
+	std::vector<PolygonInstanceData> mPolygonInstances;
+
+	// Spherical quad data
+	struct SphericalQuadData {
+		float theta, phi, rho;
+		ivec2 gridPos;
+		ColorA cornerColors[4];
+		float cellState;  // Cell state value for size scaling
+	};
+	std::vector<SphericalQuadData> mSphericalQuads;
 
 	// Instance rendering VBOs
 	gl::VboRef mCubeInstanceVbo;
@@ -174,12 +235,27 @@ private:
 	gl::VboRef mSphereInstanceVbo;
 	gl::VboMeshRef mSphereMesh;
 	gl::BatchRef mSphereBatch;
-	gl::GlslProgRef mInstanceShader;
-	
-	
-	void pattern00(int, int, int);
 
-	void pattern01(int, int, int);
+	gl::VboRef mCylinderInstanceVbo;
+	gl::VboMeshRef mCylinderMesh;
+	gl::BatchRef mCylinderBatch;
+
+	gl::GlslProgRef mInstanceShader;
+	gl::GlslProgRef mInstanceTexturedShader;
+	gl::GlslProgRef mEnvMapShader;
+
+	gl::VboRef mLineInstanceVbo;
+	gl::VboMeshRef mLineMesh;
+	gl::BatchRef mLineBatch;
+	gl::GlslProgRef mLineShader;
+
+	gl::GlslProgRef mSphericalQuadShader;
+
+	gl::TextureCubeMapRef mCubeMap;
+	
+
+	// pattern00 removed - now using new pattern system in pattern.cpp
+	// pattern01 removed - now using new pattern system in pattern.cpp
 	
 	void pattern02(int, int, int);
 	
@@ -190,12 +266,16 @@ private:
 	void pattern05(int, int, int);
 	
 	// *** basic drawing functions *** //
-	
+
 	void fillRect (int);
-	
+
     void drawEdges(const std::vector<vec3>&);
-    void strokeRect(int, float, float, float, float, float);
-    
+    // strokeRect removed - pattern00 now uses instanced line rendering
+
+    // Pattern08 plane drawing helpers
+    void drawPlaneFilled(float xL, float yB, float zF, float xW, float yH, float zD, int planeType, const ColorA& color);
+    void drawPlaneWireframe(float xL, float yB, float zF, float xW, float yH, float zD, int planeType, const ColorA& color);
+
 };
 
 #endif

@@ -224,6 +224,14 @@ void OSCMessenger::setUpListener() {
             pattern->setColor(Color(msg.getArgFloat(5), msg.getArgFloat(6), msg.getArgFloat(7)));
         }
     });
+    _listener.setListener( "/lambda/graphics/pattern/audio",
+    [&]( const osc::Message &msg ){
+        int patternId = msg.getArgInt32(0);
+        Pattern* pattern = _ogl->getPattern(patternId);
+        if (pattern) {
+            pattern->setAudioReactivity(msg.getArgFloat(1));
+        }
+    });
     _listener.setListener( "/lambda/graphics/boidpattern",
     [&]( const osc::Message &msg ){
         _ogl->boidPatternLib[msg.getArgInt32(0)].active = msg.getArgInt32(1) == 1;

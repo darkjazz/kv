@@ -66,6 +66,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		9D108E372E9EE0530009E68D /* Assets */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Assets; sourceTree = "<group>"; };
 		9DFF371F2D5F376B0062F5AD /* OSC */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); name = OSC; path = ../blocks/OSC; sourceTree = SOURCE_ROOT; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
@@ -159,6 +160,7 @@
 		29B97314FDCFA39411CA2CEA /* kv */ = {
 			isa = PBXGroup;
 			children = (
+				9D108E372E9EE0530009E68D /* Assets */,
 				01B97315FEAEA392516A2CEA /* Blocks */,
 				29B97315FDCFA39411CA2CEA /* Headers */,
 				080E96DDFE201D6D7F000001 /* Source */,
