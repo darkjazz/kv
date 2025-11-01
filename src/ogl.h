@@ -36,6 +36,7 @@
 
 #include "world.h"
 #include "pattern.h"
+#include "boidpattern.h"
 
 #include <vector>
 #include <memory>
@@ -44,7 +45,7 @@ using namespace ci;
 using namespace ci::app;
 using namespace std;
 
-const int numPatterns = 10;
+const int numPatterns = 23;
 const int numBoidPatterns = 3;
 
 // Legacy struct for boid patterns (kept for compatibility)
@@ -63,6 +64,10 @@ public:
 		// Initialize patterns using factory
 		for (int i = 0; i < numPatterns; i++) {
 			mPatterns.push_back(PatternFactory::create(i));
+		}
+		// Initialize boid patterns using factory
+		for (int i = 0; i < numBoidPatterns; i++) {
+			mBoidPatterns.push_back(BoidPatternFactory::create(i));
 		}
         boidPatternLib = new boidPattern[numBoidPatterns];
 		rotateXYZ = vec3( 1.0f, 0.0f, 0.0f);
@@ -90,11 +95,20 @@ public:
 
 	// New pattern system
 	std::vector<std::unique_ptr<Pattern>> mPatterns;
+	std::vector<std::unique_ptr<BoidPattern>> mBoidPatterns;
 
 	// Legacy accessor for OSC compatibility
 	Pattern* getPattern(int id) {
 		if (id >= 0 && id < mPatterns.size()) {
 			return mPatterns[id].get();
+		}
+		return nullptr;
+	}
+
+	// Boid pattern accessor
+	BoidPattern* getBoidPattern(int id) {
+		if (id >= 0 && id < mBoidPatterns.size()) {
+			return mBoidPatterns[id].get();
 		}
 		return nullptr;
 	}
@@ -113,6 +127,9 @@ public:
 
 	void update();
 
+	// Boid rendering
+	void drawBoids();
+
 	// Instance rendering methods
 	void clearInstanceData();
 	void addCubeInstance(const vec3& position, const ColorA& color, const vec3& scale, const gl::TextureRef& texture = nullptr);
@@ -121,6 +138,7 @@ public:
 	void addLineInstance(const vec3& start, const vec3& end, const ColorA& color, float width = 1.0f);
 	void addSphericalQuad(float theta, float phi, float rho, const ivec2& gridPos, const ColorA cornerColors[4], float cellState = 1.0f);
 	void addPlaneInstance(const vec3& position, const vec3& size, const ColorA& color, int planeType, bool wireframe);
+	void addPointInstance(const vec3& position, const ColorA& color, float size = 1.0f);
 	void drawCubeInstances();
 	void drawSphereInstances();
 	void drawCylinderInstances();
@@ -129,6 +147,10 @@ public:
 	void drawPlaneInstances();
 	void addPolygonInstance(const vec3 vertices[4], const ColorA colors[4]);
 	void drawPolygonInstances();
+	void drawPointInstances();
+	void addTriangleInstance(const vec3& v0, const vec3& v1, const vec3& v2,
+	                         const ColorA& c0, const ColorA& c1, const ColorA& c2);
+	void drawTriangleInstances();
 
 	void setBackground(float r, float g, float b) {
 		_bgr = r; _bgg = g; _bgb = b;
@@ -227,6 +249,15 @@ private:
 	};
 	std::vector<SphericalQuadData> mSphericalQuads;
 
+	// Point instance data (for Pattern15)
+	std::vector<vec3> mPointPositions;
+	std::vector<ColorA> mPointColors;
+	std::vector<float> mPointSizes;
+
+	// Triangle instance data (for Pattern20 - filled neighbor fans)
+	std::vector<vec3> mTriangleVertices;
+	std::vector<ColorA> mTriangleColors;
+
 	// Instance rendering VBOs
 	gl::VboRef mCubeInstanceVbo;
 	gl::VboMeshRef mCubeMesh;
@@ -251,7 +282,8 @@ private:
 
 	gl::GlslProgRef mSphericalQuadShader;
 
-	gl::TextureCubeMapRef mCubeMap;
+	gl::TextureCubeMapRef mCubeMap;   // fxic_* cubemap for Pattern05
+	gl::TextureCubeMapRef mCubeMap2;  // fxp_* cubemap for Pattern13
 	
 
 	// pattern00 removed - now using new pattern system in pattern.cpp

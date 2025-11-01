@@ -78,9 +78,9 @@ void GraphicsRenderer::setupOgl () {
 		console() << "Error loading environment map shader: " << e.what() << std::endl;
 	}
 
-	// Load cubemap textures
+	// Load cubemap textures (fxic_* for Pattern05)
 	try {
-		console() << "Loading cubemap textures..." << std::endl;
+		console() << "Loading fxic_* cubemap textures..." << std::endl;
 
 		// Load each face - order: +X, -X, +Y, -Y, +Z, -Z
 		ImageSourceRef images[6];
@@ -98,10 +98,36 @@ void GraphicsRenderer::setupOgl () {
 
 		// Create cubemap from image array
 		mCubeMap = gl::TextureCubeMap::create(images, fmt);
-		console() << "Cubemap loaded successfully" << std::endl;
+		console() << "fxic_* cubemap loaded successfully" << std::endl;
 	}
 	catch (const std::exception& e) {
-		console() << "Error loading cubemap: " << e.what() << std::endl;
+		console() << "Error loading fxic_* cubemap: " << e.what() << std::endl;
+	}
+
+	// Load second cubemap textures (fxp_* for Pattern13)
+	try {
+		console() << "Loading fxp_* cubemap textures..." << std::endl;
+
+		// Load each face - order: +X, -X, +Y, -Y, +Z, -Z
+		ImageSourceRef images[6];
+		images[0] = loadImage(app::loadAsset("fxp_pos_x.png"));
+		images[1] = loadImage(app::loadAsset("fxp_neg_x.png"));
+		images[2] = loadImage(app::loadAsset("fxp_pos_y.png"));
+		images[3] = loadImage(app::loadAsset("fxp_neg_y.png"));
+		images[4] = loadImage(app::loadAsset("fxp_pos_z.png"));
+		images[5] = loadImage(app::loadAsset("fxp_neg_z.png"));
+
+		gl::TextureCubeMap::Format fmt;
+		fmt.setMagFilter(GL_LINEAR);
+		fmt.setMinFilter(GL_LINEAR);
+		fmt.setWrap(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
+
+		// Create cubemap from image array
+		mCubeMap2 = gl::TextureCubeMap::create(images, fmt);
+		console() << "fxp_* cubemap loaded successfully" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error loading fxp_* cubemap: " << e.what() << std::endl;
 	}
 
 	// Load line rendering shader
@@ -245,6 +271,11 @@ void GraphicsRenderer::update() {
 		}
 	}
 
+	// Update boids
+	if (boids) {
+		boids->update();
+	}
+
 	if (ptrWorld->initialized()) {
 
 		fragSizeX = (double)(getWindowWidth() / ptrWorld->sizeX()) * 0.1;
@@ -293,6 +324,13 @@ void GraphicsRenderer::clearInstanceData() {
 	mPlaneInstances.clear();
 	mPolygonInstances.clear();
 	mSphericalQuads.clear();
+
+	mPointPositions.clear();
+	mPointColors.clear();
+	mPointSizes.clear();
+
+	mTriangleVertices.clear();
+	mTriangleColors.clear();
 }
 
 void GraphicsRenderer::addCubeInstance(const vec3& position, const ColorA& color, const vec3& scale, const gl::TextureRef& texture) {
@@ -353,6 +391,12 @@ void GraphicsRenderer::addPolygonInstance(const vec3 vertices[4], const ColorA c
 		polygon.colors[i] = colors[i];
 	}
 	mPolygonInstances.push_back(polygon);
+}
+
+void GraphicsRenderer::addPointInstance(const vec3& position, const ColorA& color, float size) {
+	mPointPositions.push_back(position);
+	mPointColors.push_back(color);
+	mPointSizes.push_back(size);
 }
 
 void GraphicsRenderer::startDraw() {
@@ -604,17 +648,24 @@ void GraphicsRenderer::drawSphereInstances() {
 		return;
 	}
 
-	// Check if any spheres are from Pattern05 (environment mapped)
+	// Check if any spheres are from Pattern05 or Pattern13 (environment mapped)
 	bool hasPattern05 = false;
+	bool hasPattern13 = false;
 	for (int id : mSpherePatternIds) {
-		if (id == 5) {
-			hasPattern05 = true;
-			break;
-		}
+		if (id == 5) hasPattern05 = true;
+		if (id == 13) hasPattern13 = true;
 	}
 
-	// Use environment map shader if Pattern05 is present and shaders are loaded
-	bool useEnvMap = hasPattern05 && mEnvMapShader && mCubeMap;
+	// Determine which cubemap to use
+	bool useEnvMap = (hasPattern05 || hasPattern13) && mEnvMapShader;
+	gl::TextureCubeMapRef activeCubeMap;
+	if (hasPattern13 && mCubeMap2) {
+		activeCubeMap = mCubeMap2;  // Pattern13 uses fxp_* cubemap
+	} else if (hasPattern05 && mCubeMap) {
+		activeCubeMap = mCubeMap;   // Pattern05 uses fxic_* cubemap
+	}
+
+	useEnvMap = useEnvMap && activeCubeMap;
 	auto shader = useEnvMap ? mEnvMapShader : mInstanceShader;
 
 	if (!shader) {
@@ -682,12 +733,22 @@ void GraphicsRenderer::drawSphereInstances() {
 	if (useEnvMap) {
 		// Set environment map uniforms
 		batch->getGlslProg()->uniform("uLightPos", vec3(0.0f, 100.0f, -100.0f));
-		batch->getGlslProg()->uniform("uBaseColor", vec4(0.3f, 0.3f, 0.3f, 0.7f));
-		batch->getGlslProg()->uniform("uMixRatio", 0.5f);
+
+		// Use different lighting for Pattern13 vs Pattern05
+		if (hasPattern13) {
+			// Pattern13: Brighter base color for fxp_* cubemap
+			batch->getGlslProg()->uniform("uBaseColor", vec4(0.8f, 0.8f, 0.8f, 1.0f));
+			batch->getGlslProg()->uniform("uMixRatio", 0.7f);  // More reflection
+		} else {
+			// Pattern05: Original darker settings for fxic_* cubemap
+			batch->getGlslProg()->uniform("uBaseColor", vec4(0.3f, 0.3f, 0.3f, 0.7f));
+			batch->getGlslProg()->uniform("uMixRatio", 0.5f);
+		}
+
 		batch->getGlslProg()->uniform("uEnvMap", 0);
 
-		// Bind cubemap and draw
-		gl::ScopedTextureBind texBind(mCubeMap, 0);
+		// Bind active cubemap and draw
+		gl::ScopedTextureBind texBind(activeCubeMap, 0);
 		batch->drawInstanced(static_cast<GLsizei>(mSpherePositions.size()));
 	} else {
 		batch->drawInstanced(static_cast<GLsizei>(mSpherePositions.size()));
@@ -699,30 +760,79 @@ void GraphicsRenderer::drawCylinderInstances() {
 		return;
 	}
 
-	// For cylinders with rotation, we need to draw them individually with model matrix transforms
-	// since the current shader doesn't support quaternion rotation via instance attributes
-	// Use Cinder's default shader (no custom attributes)
-	auto shader = gl::getStockShader(gl::ShaderDef().color().lambert());
+	// Use instanced rendering with instance shader
+	// The shader will handle position, scale, and color
+	// For rotation, we'll use a simplified approach: convert quat to 3x3 matrix
+
+	if (!mInstanceShader) {
+		return;
+	}
+
+	// Create interleaved instance data with rotation matrix
+	struct CylinderInstanceData {
+		vec3 position;
+		ColorA color;
+		vec3 scale;
+		vec4 rotation;  // Quaternion (x, y, z, w)
+	};
+
+	std::vector<CylinderInstanceData> instanceData;
+	instanceData.reserve(mCylinderPositions.size());
 
 	for (size_t i = 0; i < mCylinderPositions.size(); ++i) {
-		gl::ScopedModelMatrix scopedModel;
-		gl::ScopedGlslProg scopedShader(shader);
-
-		// Apply position
-		gl::translate(mCylinderPositions[i]);
-
-		// Apply rotation
-		gl::rotate(mCylinderRotations[i]);
-
-		// Apply scale
-		gl::scale(mCylinderScales[i]);
-
-		// Set color
-		gl::color(mCylinderColors[i]);
-
-		// Draw cylinder
-		gl::draw(mCylinderMesh);
+		CylinderInstanceData data;
+		data.position = mCylinderPositions[i];
+		data.color = mCylinderColors[i];
+		data.scale = mCylinderScales[i];
+		// Store quaternion as vec4
+		data.rotation = vec4(mCylinderRotations[i].x, mCylinderRotations[i].y,
+		                     mCylinderRotations[i].z, mCylinderRotations[i].w);
+		instanceData.push_back(data);
 	}
+
+	// Create or update instance VBO
+	if (!mCylinderInstanceVbo || mCylinderInstanceVbo->getSize() < instanceData.size() * sizeof(CylinderInstanceData)) {
+		mCylinderInstanceVbo = gl::Vbo::create(GL_ARRAY_BUFFER, instanceData, GL_DYNAMIC_DRAW);
+	} else {
+		mCylinderInstanceVbo->bufferData(instanceData.size() * sizeof(CylinderInstanceData), instanceData.data(), GL_DYNAMIC_DRAW);
+	}
+
+	// Set up instance attributes
+	geom::BufferLayout instanceLayout;
+	instanceLayout.append(geom::Attrib::CUSTOM_0, 3, sizeof(CylinderInstanceData), offsetof(CylinderInstanceData, position), 1);
+	instanceLayout.append(geom::Attrib::CUSTOM_1, 4, sizeof(CylinderInstanceData), offsetof(CylinderInstanceData, color), 1);
+	instanceLayout.append(geom::Attrib::CUSTOM_2, 3, sizeof(CylinderInstanceData), offsetof(CylinderInstanceData, scale), 1);
+	instanceLayout.append(geom::Attrib::CUSTOM_3, 4, sizeof(CylinderInstanceData), offsetof(CylinderInstanceData, rotation), 1);
+
+	// Get the VBO mesh's VBOs and layouts
+	std::vector<std::pair<geom::BufferLayout, gl::VboRef>> vertexArrayBuffers = mCylinderMesh->getVertexArrayLayoutVbos();
+
+	// Append instance data VBO
+	vertexArrayBuffers.push_back(std::make_pair(instanceLayout, mCylinderInstanceVbo));
+
+	// Create new mesh with instance data
+	auto instancedMesh = gl::VboMesh::create(
+		mCylinderMesh->getNumVertices(),
+		mCylinderMesh->getGlPrimitive(),
+		vertexArrayBuffers,
+		mCylinderMesh->getNumIndices(),
+		mCylinderMesh->getIndexDataType(),
+		mCylinderMesh->getIndexVbo()
+	);
+
+	// Build attribute mapping for custom attributes
+	gl::VboMesh::AttribGlslMap attributeMapping = {
+		{ geom::Attrib::CUSTOM_0, "ciCustom0" },
+		{ geom::Attrib::CUSTOM_1, "ciCustom1" },
+		{ geom::Attrib::CUSTOM_2, "ciCustom2" },
+		{ geom::Attrib::CUSTOM_3, "ciCustom3" }
+	};
+
+	// Create batch and draw with instancing
+	// Note: The instance shader doesn't support quaternion rotation yet,
+	// so rotations may not work correctly. This is a performance trade-off.
+	auto batch = gl::Batch::create(instancedMesh, mInstanceShader, attributeMapping);
+	batch->drawInstanced(static_cast<GLsizei>(mCylinderPositions.size()));
 }
 
 void GraphicsRenderer::drawLineInstances() {
@@ -1107,6 +1217,70 @@ void GraphicsRenderer::drawPolygonInstances() {
 	}
 }
 
+void GraphicsRenderer::drawPointInstances() {
+	if (mPointPositions.empty()) return;
+
+	// Build mesh with all points
+	std::vector<vec3> positions;
+	std::vector<ColorA> colors;
+
+	positions.reserve(mPointPositions.size());
+	colors.reserve(mPointPositions.size());
+
+	for (size_t i = 0; i < mPointPositions.size(); i++) {
+		positions.push_back(mPointPositions[i]);
+		colors.push_back(mPointColors[i]);
+	}
+
+	if (!positions.empty()) {
+		auto pointMesh = gl::VboMesh::create(positions.size(), GL_POINTS, {
+			{ geom::BufferLayout({geom::AttribInfo(geom::Attrib::POSITION, 3, 0, 0)}),
+			  gl::Vbo::create(GL_ARRAY_BUFFER, positions.size() * sizeof(vec3), positions.data(), GL_STATIC_DRAW) },
+			{ geom::BufferLayout({geom::AttribInfo(geom::Attrib::COLOR, 4, 0, 0)}),
+			  gl::Vbo::create(GL_ARRAY_BUFFER, colors.size() * sizeof(ColorA), colors.data(), GL_STATIC_DRAW) }
+		});
+
+		// Use additive blending for glow effect
+		gl::ScopedBlendAdditive scopedBlend;
+
+		// Set point size
+		glPointSize(3.0f);  // Base point size
+
+		auto shader = gl::getStockShader(gl::ShaderDef().color());
+		gl::ScopedGlslProg scopedShader(shader);
+		gl::draw(pointMesh);
+
+		glPointSize(1.0f);  // Reset to default
+	}
+}
+
+void GraphicsRenderer::addTriangleInstance(const vec3& v0, const vec3& v1, const vec3& v2,
+                                           const ColorA& c0, const ColorA& c1, const ColorA& c2) {
+	mTriangleVertices.push_back(v0);
+	mTriangleVertices.push_back(v1);
+	mTriangleVertices.push_back(v2);
+	mTriangleColors.push_back(c0);
+	mTriangleColors.push_back(c1);
+	mTriangleColors.push_back(c2);
+}
+
+void GraphicsRenderer::drawTriangleInstances() {
+	if (mTriangleVertices.empty()) return;
+
+	// Build VBO mesh with all triangles
+	auto triangleMesh = gl::VboMesh::create(mTriangleVertices.size(), GL_TRIANGLES, {
+		{ geom::BufferLayout({geom::AttribInfo(geom::Attrib::POSITION, 3, 0, 0)}),
+		  gl::Vbo::create(GL_ARRAY_BUFFER, mTriangleVertices.size() * sizeof(vec3), mTriangleVertices.data(), GL_STATIC_DRAW) },
+		{ geom::BufferLayout({geom::AttribInfo(geom::Attrib::COLOR, 4, 0, 0)}),
+		  gl::Vbo::create(GL_ARRAY_BUFFER, mTriangleColors.size() * sizeof(ColorA), mTriangleColors.data(), GL_STATIC_DRAW) }
+	});
+
+	gl::enableAlphaBlending();
+	auto shader = gl::getStockShader(gl::ShaderDef().color());
+	gl::ScopedGlslProg scopedShader(shader);
+	gl::draw(triangleMesh);
+}
+
 void GraphicsRenderer::endDraw() {
 	// Draw all collected instances
 	drawCubeInstances();
@@ -1116,12 +1290,114 @@ void GraphicsRenderer::endDraw() {
 	drawSphericalQuads();
 	drawPlaneInstances();
 	drawPolygonInstances();
+	drawPointInstances();
+	drawTriangleInstances();
 
 	// Draw legacy lines (will be deprecated)
     mGrid->end();
     mGrid->draw();
 
+	// Draw boids if they exist
+	drawBoids();
+
 	counter++;
+}
+
+void GraphicsRenderer::drawBoids() {
+	// Early exit if no boids
+	if (!boids || boids->numBoids() == 0) return;
+
+	// Debug: log boid info once
+	static bool logged = false;
+	if (!logged) {
+		console() << "drawBoids: " << boids->numBoids() << " boids, dimensions: "
+		          << boids->dimensions().x << "," << boids->dimensions().y << "," << boids->dimensions().z << std::endl;
+		if (boids->numBoids() > 0) {
+			Boid* b = boids->getBoidAtIndex(0);
+			console() << "First boid pos: " << b->pos.x << "," << b->pos.y << "," << b->pos.z << std::endl;
+		}
+		logged = true;
+	}
+
+	// Center boids around origin (similar to cellular patterns)
+	vec3 boidDimensions = boids->dimensions();
+	vec3 boidOffset = boidDimensions * 0.5f;
+
+	// Iterate through each boid pattern
+	for (const auto& pattern : mBoidPatterns) {
+		if (!pattern->isActive()) continue;
+
+		int patternId = pattern->getId();
+
+		// Iterate through all boids
+		for (int i = 0; i < boids->numBoids(); i++) {
+			Boid* boid = boids->getBoidAtIndex(i);
+
+			// Get render configuration for this boid
+			BoidRenderConfig config = pattern->getRenderConfig(boid, i, boids, this);
+
+			// Center boid position around origin
+			vec3 centeredPos = boid->pos - boidOffset;
+
+			// Render based on mode
+			switch (config.mode) {
+				case BoidRenderMode::SPHERES: {
+					// Simple sphere at boid position
+					addSphereInstance(centeredPos, config.color, config.size, -1);
+					break;
+				}
+
+				case BoidRenderMode::TRAILS: {
+					// Main boid sphere
+					addSphereInstance(centeredPos, config.color, config.size, -1);
+
+					// Trail particles along velocity vector (backwards)
+					vec3 velocityDir = glm::normalize(boid->vec);
+					for (int t = 1; t <= config.trailLength; t++) {
+						float trailFactor = (float)t / (float)config.trailLength;
+						vec3 trailPos = centeredPos - velocityDir * trailFactor * 3.0f;
+
+						// Fade trail particles
+						ColorA trailColor = config.color;
+						trailColor.a *= (1.0f - trailFactor * 0.8f);
+
+						// Shrink trail particles
+						float trailSize = config.size * (1.0f - trailFactor * 0.6f);
+
+						addSphereInstance(trailPos, trailColor, trailSize, -1);
+					}
+					break;
+				}
+
+				case BoidRenderMode::CONNECTIONS: {
+					// Draw boid as small sphere
+					addSphereInstance(centeredPos, config.color, config.size, -1);
+
+					// Draw lines to nearby boids
+					for (int j = i + 1; j < boids->numBoids(); j++) {
+						Boid* otherBoid = boids->getBoidAtIndex(j);
+						float dist = boid->distance(otherBoid);
+
+						if (dist < config.connectionRadius) {
+							// Calculate line color based on distance (closer = brighter)
+							float distFactor = 1.0f - (dist / config.connectionRadius);
+							ColorA lineColor = config.color;
+							lineColor.a *= distFactor;
+
+							vec3 otherCenteredPos = otherBoid->pos - boidOffset;
+							addLineInstance(centeredPos, otherCenteredPos, lineColor, config.lineWidth);
+						}
+					}
+					break;
+				}
+
+				case BoidRenderMode::CUSTOM: {
+					// Custom rendering can be added here for future patterns
+					break;
+				}
+			}
+		}
+	}
 }
 
 void GraphicsRenderer::drawFragment(Cell* cell) {
@@ -1161,9 +1437,18 @@ void GraphicsRenderer::drawFragment(Cell* cell) {
 
 		// Dispatch based on render mode
 		switch (config.mode) {
-			case RenderMode::CUBES:
+			case RenderMode::CUBES: {
+				// Pattern11 needs special Y position handling
+				if (patternId == 11) {
+					float yCompress = config.customFloats.at("yCompress");  // 0.5
+					float yOffset = config.customFloats.at("yOffset");      // 0.25
+
+					// Recalculate Y position: yB = y * (fragSizeX * 0.5) + (fragSizeX * 0.25)
+					position.y = (float)y * fragSizeY * yCompress + fragSizeY * yOffset - hx;
+				}
 				addCubeInstance(position, config.color, finalScale, config.texture);
 				break;
+			}
 
 			case RenderMode::SPHERES:
 				addSphereInstance(position, config.color, config.uniformScale * fragSizeX, patternId);
@@ -1209,11 +1494,14 @@ void GraphicsRenderer::drawFragment(Cell* cell) {
 			}
 
 			case RenderMode::PLANES: {
-				// Pattern08: Center planes with nested rectangles
-				float unmap = config.customFloats.at("unmap");
-				bool onXPlane = config.customFloats.at("onXPlane") > 0.5f;
-				bool onYPlane = config.customFloats.at("onYPlane") > 0.5f;
-				bool onZPlane = config.customFloats.at("onZPlane") > 0.5f;
+				int patternId = pattern->getId();
+
+				if (patternId == 8) {
+					// Pattern08: Center planes with nested rectangles
+					float unmap = config.customFloats.at("unmap");
+					bool onXPlane = config.customFloats.at("onXPlane") > 0.5f;
+					bool onYPlane = config.customFloats.at("onYPlane") > 0.5f;
+					bool onZPlane = config.customFloats.at("onZPlane") > 0.5f;
 
 				// Draw initial stroked/filled rectangles
 				float xL_base = (float)x * fragSizeX + (fragSizeX * 0.5f) - (fragSizeX * unmap) - hx;
@@ -1268,6 +1556,53 @@ void GraphicsRenderer::drawFragment(Cell* cell) {
 						addPlaneInstance(vec3(xL_nest, yB_nest, zF_nest), vec3(xW_nest, yH_nest, zD_nest), currentColor, 0, false);
 					}
 				}
+				} else if (patternId == 10) {
+					// Pattern10: Boundary rectangles with state-based fill/stroke
+					float unmap = config.customFloats.at("unmap");
+					float mapState = config.customFloats.at("mapState");
+					bool shouldFill = config.customFloats.at("shouldFill") > 0.5f;
+
+					bool onXNeg = config.customFloats.at("onXNeg") > 0.5f;
+					bool onYNeg = config.customFloats.at("onYNeg") > 0.5f;
+					bool onZNeg = config.customFloats.at("onZNeg") > 0.5f;
+					bool onXPos = config.customFloats.at("onXPos") > 0.5f;
+					bool onYPos = config.customFloats.at("onYPos") > 0.5f;
+					bool onZPos = config.customFloats.at("onZPos") > 0.5f;
+
+					// Calculate rectangle dimensions
+					float xL_base = (float)x * fragSizeX + (fragSizeX * 0.5f) - (fragSizeX * unmap) - hx;
+					float yB_base = (float)y * fragSizeY + (fragSizeY * 0.5f) - (fragSizeY * unmap) - hx;
+					float zF_base = (float)z * fragSizeZ + (fragSizeZ * 0.5f) - (fragSizeZ * unmap) - hx;
+
+					float xW_base = fragSizeX * unmap * 2.0f;
+					float yH_base = fragSizeY * unmap * 2.0f;
+					float zD_base = fragSizeZ * unmap * 2.0f;
+
+					// Draw on each boundary
+					if (onXNeg) {
+						addPlaneInstance(vec3(xL_base, yB_base, zF_base), vec3(xW_base, yH_base, zD_base), config.color, 1, !shouldFill);
+					}
+					if (onYNeg) {
+						addPlaneInstance(vec3(xL_base, yB_base, zF_base), vec3(xW_base, yH_base, zD_base), config.color, 2, !shouldFill);
+					}
+					if (onZNeg) {
+						addPlaneInstance(vec3(xL_base, yB_base, zF_base), vec3(xW_base, yH_base, zD_base), config.color, 0, !shouldFill);
+					}
+
+					// For positive boundaries, adjust position based on unmap
+					if (onXPos) {
+						float xL_pos = xL_base + (xW_base * unmap);
+						addPlaneInstance(vec3(xL_pos, yB_base, zF_base), vec3(xW_base, yH_base, zD_base), config.color, 1, !shouldFill);
+					}
+					if (onYPos) {
+						float yB_pos = yB_base + (yH_base * unmap);
+						addPlaneInstance(vec3(xL_base, yB_pos, zF_base), vec3(xW_base, yH_base, zD_base), config.color, 2, !shouldFill);
+					}
+					if (onZPos) {
+						float zF_pos = zF_base + (zD_base * unmap);
+						addPlaneInstance(vec3(xL_base, yB_base, zF_pos), vec3(xW_base, yH_base, zD_base), config.color, 0, !shouldFill);
+					}
+				}
 				break;
 			}
 
@@ -1275,6 +1610,439 @@ void GraphicsRenderer::drawFragment(Cell* cell) {
 				// Pattern09: Smooth polygons connecting neighbors
 				// Vertices are already in world space from the pattern
 				addPolygonInstance(config.polygonVertices, config.polygonColors);
+				break;
+			}
+
+			case RenderMode::CUSTOM: {
+				// Pattern03: Spherical neighbor connections with dynamic motion
+				if (patternId == 3) {
+					float state = config.customFloats.at("state");
+					float unmap = config.customFloats.at("unmap");
+					int cellX = static_cast<int>(config.customFloats.at("x"));
+					int cellY = static_cast<int>(config.customFloats.at("y"));
+					int cellZ = static_cast<int>(config.customFloats.at("z"));
+
+					// Get neighbor 3
+					Cell* otherCell = ptrWorld->rule()->getNeighbor(currentCell, 3);
+					float otherState = otherCell->phase;
+
+					// Animation phase based on counter (wraps around maxphase=28)
+					float maxPhase = 28.0f;
+					float animPhase = (2.0f * M_PI / maxPhase) * (fmod(counter, maxPhase) / maxPhase);
+
+					// Calculate spherical coordinates for current cell
+					float thetaA = ((2.0f * M_PI) / ptrWorld->sizeX() * cellX) + animPhase;
+					float phiA = ((2.0f * M_PI) / ptrWorld->sizeY() * cellY) + animPhase;
+					float rhoA = cellZ * (fragSizeX * 0.5f) + (fragSizeX * unmap);
+
+					// Convert to Cartesian
+					float xL = rhoA * cos(thetaA) * cos(phiA);
+					float yB = rhoA * sin(thetaA) * cos(phiA);
+					float zF = rhoA * sin(phiA);
+
+					// Calculate spherical coordinates for neighbor cell
+					float thetaB = ((2.0f * M_PI) / ptrWorld->sizeX() * otherCell->x) + animPhase;
+					float phiB = ((2.0f * M_PI) / ptrWorld->sizeY() * otherCell->y) + animPhase;
+					float rhoB = cellZ * (fragSizeX * 0.5f) + (fragSizeX * otherState);
+
+					// Convert to Cartesian
+					float xW = rhoB * cos(thetaB) * cos(phiB);
+					float yH = rhoB * sin(thetaB) * cos(phiB);
+					float zD = rhoB * sin(phiB);
+
+					// Draw points at both positions
+					addPointInstance(vec3(xL, yB, zF), config.color, 4.0f);
+					addPointInstance(vec3(xW, yH, zD), config.color, 4.0f);
+
+					// Draw line connecting them
+					addLineInstance(vec3(xL, yB, zF), vec3(xW, yH, zD), config.color, 1.0f);
+				}
+				// Pattern12: Composite sphere + cube + wireframe cube
+				else if (patternId == 12) {
+					float mapState = config.customFloats.at("mapState");
+
+					// Calculate geometry size and position
+					float xW = fragSizeX * mapState;
+					float yH = fragSizeY * mapState;
+					float zD = fragSizeZ * mapState;
+
+					vec3 cubeScale(xW, yH, zD);
+
+					// 1. Draw sphere (radius = xW * 0.5, which is size * mapState * 0.5)
+					addSphereInstance(position, config.color, xW * 0.5f, patternId);
+
+					// 2. Draw filled cube with brightened color
+					ColorA brightenedColor = config.color;
+					brightenedColor.r = std::min(brightenedColor.r + 0.2f, 1.0f);
+					brightenedColor.g = std::min(brightenedColor.g + 0.2f, 1.0f);
+					brightenedColor.b = std::min(brightenedColor.b + 0.2f, 1.0f);
+					addCubeInstance(position, brightenedColor, cubeScale, nullptr);
+
+					// 3. Draw wireframe cube with full alpha
+					// Use lines to draw wireframe cube
+					ColorA wireframeColor = config.color;
+					wireframeColor.a = 1.0f;  // Full alpha
+
+					// Calculate cube corners
+					float halfW = xW * 0.5f;
+					float halfH = yH * 0.5f;
+					float halfD = zD * 0.5f;
+
+					vec3 v000 = position + vec3(-halfW, -halfH, -halfD);
+					vec3 v001 = position + vec3(-halfW, -halfH,  halfD);
+					vec3 v010 = position + vec3(-halfW,  halfH, -halfD);
+					vec3 v011 = position + vec3(-halfW,  halfH,  halfD);
+					vec3 v100 = position + vec3( halfW, -halfH, -halfD);
+					vec3 v101 = position + vec3( halfW, -halfH,  halfD);
+					vec3 v110 = position + vec3( halfW,  halfH, -halfD);
+					vec3 v111 = position + vec3( halfW,  halfH,  halfD);
+
+					// Draw 12 edges of the wireframe cube
+					// Bottom face (y = -halfH)
+					addLineInstance(v000, v100, wireframeColor, 1.0f);
+					addLineInstance(v100, v101, wireframeColor, 1.0f);
+					addLineInstance(v101, v001, wireframeColor, 1.0f);
+					addLineInstance(v001, v000, wireframeColor, 1.0f);
+
+					// Top face (y = halfH)
+					addLineInstance(v010, v110, wireframeColor, 1.0f);
+					addLineInstance(v110, v111, wireframeColor, 1.0f);
+					addLineInstance(v111, v011, wireframeColor, 1.0f);
+					addLineInstance(v011, v010, wireframeColor, 1.0f);
+
+					// Vertical edges
+					addLineInstance(v000, v010, wireframeColor, 1.0f);
+					addLineInstance(v100, v110, wireframeColor, 1.0f);
+					addLineInstance(v101, v111, wireframeColor, 1.0f);
+					addLineInstance(v001, v011, wireframeColor, 1.0f);
+				}
+				else if (patternId == 13) {
+					// Pattern13: Network visualization with cube-mapped spheres and line connections
+					float mapState = config.customFloats.at("mapState");
+					float offsetX = config.customFloats.at("offsetX");
+					float offsetY = config.customFloats.at("offsetY");
+					float offsetZ = config.customFloats.at("offsetZ");
+					float cellState = config.customFloats.at("cellState");
+
+					// Apply circular motion offset
+					vec3 spherePos = position + vec3(
+						fragSizeX * offsetX,
+						fragSizeY * offsetY,
+						fragSizeZ * offsetZ
+					);
+
+					// Calculate sphere size - state == 1.0 uses fixed size, otherwise uses mapState
+					float sphereRadius;
+					if (cellState == 1.0f) {
+						sphereRadius = fragSizeX * 0.47f;
+					} else {
+						sphereRadius = mapState * fragSizeX * 0.47f;
+					}
+
+					// 1. Draw cube-mapped sphere (uses Pattern13's ID for env mapping)
+					addSphereInstance(spherePos, config.color, sphereRadius, patternId);
+
+					// 2. Draw thin lines connecting to neighbors (much faster than cylinders!)
+					// Iterate through all 26 neighbors
+					for (int i = 0; i < 26; i++) {
+						Cell* neighbor = ptrWorld->rule()->getNeighbor(currentCell, i);
+
+						// Only connect to neighbors with low phase (1.0-10.0)
+						if (neighbor->phase > 0.0f && neighbor->phase < 10.0f) {
+							// Calculate neighbor position with same circular motion
+							float neighborMaxState = ptrWorld->rule()->numStates() - 1;
+							float neighborState = neighbor->states[ptrWorld->index()];
+							float neighborMapState = (neighborMaxState - neighborState) * (1.0f / neighborMaxState);
+							float neighborAngle = (1.0f - neighborMapState) * 2.0f * M_PI;
+
+							vec3 neighborPos;
+							neighborPos.x = (float)neighbor->x * fragSizeX + (fragSizeX * 0.5f) - hx;
+							neighborPos.y = (float)neighbor->y * fragSizeY + (fragSizeY * 0.5f) - hx;
+							neighborPos.z = (float)neighbor->z * fragSizeZ + (fragSizeZ * 0.5f) - hx;
+
+							neighborPos += vec3(
+								fragSizeX * sin(neighborAngle),
+								fragSizeY * cos(neighborAngle),
+								fragSizeZ * sin(neighborAngle)
+							);
+
+							// Calculate connection color (fades based on neighbor phase)
+							float phaseFade = 1.0f - ((neighbor->phase - 1.0f) / 11.0f) * 0.7f;  // linlin(phase, 1, 12, 0.0, 0.7)
+							ColorA connectionColor = config.color;
+							connectionColor.r *= phaseFade;
+							connectionColor.g *= phaseFade;
+							connectionColor.b *= phaseFade;
+
+							// Draw thin line connection (instanced rendering - very fast!)
+							addLineInstance(spherePos, neighborPos, connectionColor, 1.0f);
+						}
+					}
+				}
+				else if (patternId == 15) {
+					// Pattern15: Random points with BMU glow
+					float cstate = config.customFloats.at("cstate");
+					float x = config.customFloats.at("x");
+					float y = config.customFloats.at("y");
+					float z = config.customFloats.at("z");
+					bool isBMU = (config.customFloats.at("isBMU") > 0.5f);
+
+					// Vary number of points based on cell state
+					// State 1.0 (lowest) = 13 points, higher states = fewer points down to 5
+					// Using linear interpolation: pts = 13 - (cstate - 1) * 8 / (maxState - 1)
+					// For typical maxState of 10: state 1 = 13 pts, state 10 = 5 pts
+					float maxState = ptrWorld->rule()->numStates() - 1;
+					float normalizedState = (cstate - 1.0f) / std::max(1.0f, maxState - 1.0f);
+					int pts = static_cast<int>(13.0f - normalizedState * 8.0f);
+					pts = std::max(5, std::min(13, pts));  // Clamp between 5 and 13
+
+					for (int i = 1; i <= pts; i++) {
+						// Random position within cell bounds
+						float randX = x * fragSizeX + randFloat() * fragSizeX - hx;
+						float randY = y * fragSizeY + randFloat() * fragSizeY - hy;
+						float randZ = z * fragSizeZ + randFloat() * fragSizeZ - hx;
+
+						vec3 pointPos(randX, randY, randZ);
+
+						// Color with enhanced BMU glow
+						ColorA pointColor = config.color;
+						if (isBMU) {
+							// Much brighter glow for BMU cell (8x instead of 3x)
+							// Use additive blending so values can exceed 1.0
+							pointColor.r = pointColor.r * 8.0f;
+							pointColor.g = pointColor.g * 8.0f;
+							pointColor.b = pointColor.b * 8.0f;
+							pointColor.a = 1.0f;  // Full alpha for maximum glow
+						}
+
+						addPointInstance(pointPos, pointColor, 1.0f);
+					}
+				}
+				else if (patternId == 16) {
+					// Pattern16: Conditional plane rectangles based on neighbor states
+					float unmap = config.customFloats.at("unmap");
+
+					// Calculate rectangle dimensions
+					float rectSize = mapf(unmap, 0.3f, 0.8f);
+
+					float xL_base = (float)x * fragSizeX + (fragSizeX * 0.5f) - (fragSizeX * rectSize) - hx;
+					float yB_base = (float)y * fragSizeY + (fragSizeY * 0.5f) - (fragSizeY * rectSize) - hx;
+					float zF_base = (float)z * fragSizeZ + (fragSizeZ * 0.5f) - (fragSizeZ * rectSize) - hx;
+
+					float xW = fragSizeX * rectSize * 2.0f;
+					float yH = fragSizeY * rectSize * 2.0f;
+					float zD = fragSizeZ * rectSize * 2.0f;
+
+					// Neighbor indices and corresponding plane types from original pattern23
+					// ind[12] = { 4, 1, 10, 2, 12, 0, 14, 0, 16, 2, 22, 1 };
+					// Pairs are: (neighborIndex, planeType)
+					// PlaneType: 0=XY, 1=YZ, 2=XZ
+					struct NeighborCheck {
+						int neighborIndex;
+						int planeType;
+					};
+					NeighborCheck checks[6] = {
+						{4, 1},   // Neighbor 4, YZ plane
+						{10, 2},  // Neighbor 10, XZ plane
+						{12, 0},  // Neighbor 12, XY plane
+						{14, 0},  // Neighbor 14, XY plane
+						{16, 2},  // Neighbor 16, XZ plane
+						{22, 1}   // Neighbor 22, YZ plane
+					};
+
+					// Check each neighbor and draw plane if neighbor state is 0
+					for (int i = 0; i < 6; i++) {
+						Cell* neighbor = ptrWorld->rule()->getNeighbor(currentCell, checks[i].neighborIndex);
+						if (neighbor->states[ptrWorld->index()] == 0.0f) {
+							// Draw filled rectangle on the specified plane
+							addPlaneInstance(
+								vec3(xL_base, yB_base, zF_base),
+								vec3(xW, yH, zD),
+								config.color,
+								checks[i].planeType,
+								false  // filled, not wireframe
+							);
+						}
+					}
+				}
+				else if (patternId == 17) {
+					// Pattern17: Combined animated lines (pattern24 + pattern25)
+					float cstate = config.customFloats.at("cstate");
+
+					// --- Pattern24 part: Single sine-wave animated line ---
+					float xL = x * fragSizeX + fragSizeX - (fragSizeX * 2.0f * cstate);
+					float yB = y * fragSizeY + (fragSizeY * 0.5f);
+					float zF = z * fragSizeX + (fragSizeX * 0.5f);
+
+					xL -= hx;
+					yB -= hy;
+					zF -= hx;
+
+					float zD = zF;
+
+					// Sine wave animation
+					yB += (fragSizeY * 4.0f * sin(cstate * 2.0f * M_PI)) - (fragSizeY * 8.0f * sin(cstate * 2.0f * M_PI));
+
+					float xW = fragSizeX * cstate * 4.0f;
+					float yH = yB;
+
+					// Color using configured pattern color
+					ColorA line1Color = config.color;
+					addLineInstance(vec3(xL, yB, zF), vec3(xL + xW, yH, zD), line1Color, 1.0f);
+
+					// --- Pattern25 part: Cross pattern with 4 lines ---
+					// Line 1: horizontal top-left to offset
+					xL = x * fragSizeX + (fragSizeX * 0.25f);
+					yB = y * fragSizeY + (fragSizeY * 0.25f);
+					zF = z * fragSizeX + (fragSizeX * 0.5f);
+					xW = fragSizeX * cstate * 2.0f;
+
+					xL -= hx;
+					yB -= hy;
+					zF -= hx;
+
+					ColorA line2Color = config.color;
+					addLineInstance(vec3(xL, yB, zF), vec3(xL + xW, yB, zF), line2Color, 1.0f);
+
+					// Line 2: horizontal bottom-right to offset (opposite direction)
+					xL = x * fragSizeX + (fragSizeX * 0.75f);
+					yB = y * fragSizeY + (fragSizeY * 0.75f);
+					xW = fragSizeX * cstate * -2.0f;
+
+					xL -= hx;
+					yB -= hy;
+
+					ColorA line3Color = config.color;
+					addLineInstance(vec3(xL, yB, zF), vec3(xL + xW, yB, zF), line3Color, 1.0f);
+
+					// Line 3: vertical top-right to offset (inverted color)
+					xL = x * fragSizeX + (fragSizeX * 0.75f);
+					yB = y * fragSizeY + (fragSizeY * 0.25f);
+					float yH_offset = fragSizeX * cstate * 2.0f;
+
+					xL -= hx;
+					yB -= hy;
+
+					ColorA line4Color(
+						1.0f - config.color.r,
+						1.0f - config.color.g,
+						1.0f - config.color.b,
+						config.color.a
+					);
+					addLineInstance(vec3(xL, yB, zF), vec3(xL, yB + yH_offset, zF), line4Color, 1.0f);
+
+					// Line 4: vertical bottom-left to offset (opposite direction, inverted color)
+					xL = x * fragSizeX + (fragSizeX * 0.25f);
+					yB = y * fragSizeY + (fragSizeY * 0.75f);
+					yH_offset = fragSizeX * cstate * -2.0f;
+
+					xL -= hx;
+					yB -= hy;
+
+					ColorA line5Color(
+						1.0f - config.color.r,
+						1.0f - config.color.g,
+						1.0f - config.color.b,
+						config.color.a
+					);
+					addLineInstance(vec3(xL, yB, zF), vec3(xL, yB + yH_offset, zF), line5Color, 1.0f);
+				}
+				else if (patternId == 19 || patternId == 20) {
+					// Pattern19/20: Dynamic neighbor polygon fan (pattern35)
+					// Draws a polygon connecting the center cell to all active neighbors
+					float unmap = config.customFloats.at("unmap");
+					bool filled = (config.customFloats.at("filled") > 0.5f);
+
+					// Center vertex position
+					float centerX = (float)x * fragSizeX + (fragSizeX * 0.5f) - hx;
+					float centerY = (float)y * fragSizeY + (fragSizeY * 0.5f) - hx;
+					float centerZ = (float)z * fragSizeZ + (fragSizeZ * 0.5f) - hx;
+					vec3 centerPos(centerX, centerY, centerZ);
+
+					// Collect all active neighbor vertices
+					std::vector<vec3> neighborPositions;
+					std::vector<ColorA> neighborColors;
+
+					int nSize = ptrWorld->rule()->nSize();
+					for (int i = 0; i < nSize; i++) {
+						Cell* neighbor = ptrWorld->rule()->getNeighbor(currentCell, i);
+						if (neighbor->phase > 0.0f) {
+							// Calculate neighbor position
+							float nX = (float)neighbor->x * fragSizeX + (fragSizeX * 0.5f) - hx;
+							float nY = (float)neighbor->y * fragSizeY + (fragSizeY * 0.5f) - hx;
+							float nZ = (float)neighbor->z * fragSizeZ + (fragSizeZ * 0.5f) - hx;
+
+							neighborPositions.push_back(vec3(nX, nY, nZ));
+
+							// Calculate color for this neighbor
+							float maxState = ptrWorld->rule()->numStates() - 1;
+							float neighborUnmap = 1.0f - (neighbor->phase / maxState);
+
+							// Use pattern's color mapping
+							Pattern* pattern = getPattern(patternId);
+							if (pattern) {
+								ColorA neighborColor;
+								float colorMapValue = pattern->getColorMap();
+								float alphaMapValue = pattern->getAlphaMap();
+								Color baseColor = pattern->getColor();
+								float baseAlpha = pattern->getAlpha();
+
+								neighborColor.r = baseColor.r * abs(colorMapValue - neighborUnmap);
+								neighborColor.g = baseColor.g * abs(colorMapValue - neighborUnmap);
+								neighborColor.b = baseColor.b * abs(colorMapValue - neighborUnmap);
+								neighborColor.a = baseAlpha * abs(alphaMapValue - neighborUnmap);
+
+								neighborColors.push_back(neighborColor);
+							} else {
+								neighborColors.push_back(config.color);
+							}
+						}
+					}
+
+					// Draw polygon fan
+					if (neighborPositions.size() >= 2) {
+						if (filled) {
+							// Pattern20: Batched filled triangles (GPU instanced)
+							// Add all triangles to the batch for efficient rendering
+							for (size_t i = 0; i < neighborPositions.size(); i++) {
+								size_t nextIdx = (i + 1) % neighborPositions.size();
+
+								// Add triangle: center -> neighbor[i] -> neighbor[i+1]
+								addTriangleInstance(
+									centerPos, neighborPositions[i], neighborPositions[nextIdx],
+									config.color, neighborColors[i], neighborColors[nextIdx]
+								);
+							}
+						} else {
+							// Pattern19: Wireframe lines
+							for (size_t i = 0; i < neighborPositions.size(); i++) {
+								size_t nextIdx = (i + 1) % neighborPositions.size();
+
+								ColorA colors[3] = {
+									config.color,  // Center color
+									neighborColors[i],
+									neighborColors[nextIdx]
+								};
+
+								// Draw edges with appropriate colors
+								addLineInstance(centerPos, neighborPositions[i],
+									ColorA((colors[0].r + colors[1].r) * 0.5f,
+										   (colors[0].g + colors[1].g) * 0.5f,
+										   (colors[0].b + colors[1].b) * 0.5f,
+										   (colors[0].a + colors[1].a) * 0.5f), 1.0f);
+							}
+
+							// Also connect neighbors to each other to complete the fan
+							for (size_t i = 0; i < neighborPositions.size(); i++) {
+								size_t nextIdx = (i + 1) % neighborPositions.size();
+								addLineInstance(neighborPositions[i], neighborPositions[nextIdx],
+									ColorA((neighborColors[i].r + neighborColors[nextIdx].r) * 0.5f,
+										   (neighborColors[i].g + neighborColors[nextIdx].g) * 0.5f,
+										   (neighborColors[i].b + neighborColors[nextIdx].b) * 0.5f,
+										   (neighborColors[i].a + neighborColors[nextIdx].a) * 0.5f), 1.0f);
+							}
+						}
+					}
+				}
 				break;
 			}
 

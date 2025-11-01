@@ -176,102 +176,55 @@ public:
 };
 
 // ============================================================================
-// Pattern03: Complex animated geometry
+// Pattern03: Spherical neighbor connections with dynamic motion (pattern10)
 // ============================================================================
 class Pattern03 : public Pattern {
 private:
-    float mCenterRadius = 5.0f;
-    float mRotationSpeed = 2.0f;
-    float mNoiseScale = 0.5f;
+    float mMaxPhase = 28.0f;
 
 public:
     Pattern03() : Pattern(3) {}
 
-    string getName() const override { return "Complex Geometry"; }
-    string getDescription() const override { return "Animated spheres with rotation, scaling, and glow effects"; }
+    string getName() const override { return "Spherical Neighbor Lines"; }
+    string getDescription() const override { return "Points and lines to neighbor in spherical coords with rotating theta/phi"; }
 
     bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
         if (!mActive) return false;
 
-        float dist = distanceFromCenter(x, y, z, world);
-        float cstate = getCellState(cell, world);
-        return dist > mCenterRadius && cstate > 0.4f;
+        // Original: state > 0.0 && z % 3 == 0
+        return (cell->phase > 0.0f && z % 3 == 0);
     }
 
     RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
                                  GraphicsRenderer* renderer) const override {
         RenderConfig config;
-        config.mode = RenderMode::CYLINDERS;
+        config.mode = RenderMode::CUSTOM;  // Custom rendering for points + lines
 
         World* w = const_cast<World*>(world);
-        float cstate = getCellState(cell, world);
+        float state = cell->phase;
 
-        // Get world center and position
-        vec3 center = vec3(w->sizeX(), w->sizeY(), w->sizeZ()) * 0.5f;
-        vec3 pos = vec3(x, y, z);
-        vec3 toCenter = glm::normalize(center - pos);
+        // Calculate unmap value
+        float maxState = w->rule()->numStates() - 1;
+        float unmap = 1.0f - (state / maxState);
 
-        // Rotate cylinder to point toward center
-        vec3 up = vec3(0, 1, 0);
-        vec3 cylinderAxis = vec3(0, 1, 0);  // Cylinder default orientation
+        // Store data for custom rendering
+        config.customFloats["state"] = state;
+        config.customFloats["unmap"] = unmap;
+        config.customFloats["x"] = static_cast<float>(x);
+        config.customFloats["y"] = static_cast<float>(y);
+        config.customFloats["z"] = static_cast<float>(z);
 
-        // Create rotation from cylinder axis to toCenter direction
-        float angle = acos(glm::dot(cylinderAxis, toCenter));
-        vec3 rotationAxis = glm::cross(cylinderAxis, toCenter);
-        if (glm::length(rotationAxis) > 0.001f) {
-            rotationAxis = glm::normalize(rotationAxis);
-            config.rotation = glm::angleAxis(angle, rotationAxis);
-        }
+        // Single color based on unmap value (pattern uses abs(colormap - unmap))
+        // Using simple color mapping to match pattern colormap behavior
+        ColorA baseColor = applyMapping(unmap);
 
-        // Add spinning animation around the toCenter axis
-        quat spin = glm::angleAxis(mTime * mRotationSpeed, toCenter);
-        config.rotation = spin * config.rotation;
+        // Subtle audio reactivity: mid frequencies modulate brightness
+        float audioMod = 1.0f + (getAudioBand(renderer, 1) * 0.3f);  // 0-30% boost from mids
+        baseColor.r = std::min(baseColor.r * audioMod, 1.0f);
+        baseColor.g = std::min(baseColor.g * audioMod, 1.0f);
+        baseColor.b = std::min(baseColor.b * audioMod, 1.0f);
 
-        // Animated non-uniform scale - thin in X/Z, elongated in Y (cylinder height)
-        float pulse = sin(mTime * mRotationSpeed + x * 0.3f + y * 0.2f + z * 0.1f) * 0.5f + 0.5f;
-
-        // Subtle audio reactivity: high frequencies modulate cylinder height
-        float audioMod = 1.0f + (getAudioBand(renderer, 2) * 0.4f);  // 0-40% boost from highs
-        config.scale = vec3(
-            0.01f + 0.01f * pulse,           // X - thin
-            (4.0f + 0.5f * pulse) * audioMod,  // Y - height varies with audio
-            0.01f + 0.01f * pulse            // Z - thin
-        );
-
-        // Simple noise-based offset using sin/cos approximation
-        vec3 noisePos = pos * mNoiseScale + vec3(mTime * 0.1f);
-        config.offset = vec3(
-            (sin(noisePos.x + noisePos.y) - 0.5f) * 0.5f,
-            (cos(noisePos.y + noisePos.z) - 0.5f) * 0.5f,
-            (sin(noisePos.z + noisePos.x) - 0.5f) * 0.5f
-        );
-
-        // Distance-based color with HSV-like mapping
-        float dist = normalizedDistance(x, y, z, world);
-        float hue = fmod(dist + mTime * 0.1f, 1.0f);  // Animate hue over time
-
-        // Simple HSV to RGB conversion for hue variation
-        float r = abs(hue * 6.0f - 3.0f) - 1.0f;
-        float g = 2.0f - abs(hue * 6.0f - 2.0f);
-        float b = 2.0f - abs(hue * 6.0f - 4.0f);
-        r = glm::clamp(r, 0.0f, 1.0f);
-        g = glm::clamp(g, 0.0f, 1.0f);
-        b = glm::clamp(b, 0.0f, 1.0f);
-        config.color = ColorA(r * 0.8f, g * 0.8f, b, 1.0f);
-
-        // Glow effect based on cell state
-        config.glow = cstate;
-        config.emissiveColor = config.color * cstate;
-
-        // Material properties
-        config.metallic = 0.8f;
-        config.roughness = 0.2f + dist * 0.3f;
-
-        // Blend mode
-        config.blendMode = BlendMode::ADDITIVE;
-
-        // Uniform scale multiplier
-        config.uniformScale = mapf(cstate, 0.5f, 1.0f);
+        config.color = baseColor;
 
         return config;
     }
@@ -357,7 +310,7 @@ public:
 
         // Subtle audio reactivity: amplitude modulates scale
         float audioMod = 1.0f + (getAudioAmplitude(renderer) * 0.25f);  // 0-25% boost
-        config.uniformScale = mapf(cstate * (0.7f + pulse * 0.3f), 0.5f, 1.2f) * audioMod;
+        config.uniformScale = mapf(cstate * (0.7f + pulse * 0.3f), 0.5f, 2.0f) * audioMod;
 
         // Bright color to be visible even without texture
         config.color = applyMapping(cstate);
@@ -717,6 +670,883 @@ public:
 };
 
 // ============================================================================
+// Pattern10: Boundary rectangles with state-based fill/stroke (pattern09)
+// ============================================================================
+class Pattern10 : public Pattern {
+public:
+    Pattern10() : Pattern(10) {}
+
+    string getName() const override { return "Boundary Rectangles"; }
+    string getDescription() const override { return "Draws filled/wireframe rectangles on boundaries based on cell state"; }
+
+    bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
+        if (!mActive) return false;
+        if (cell->phase <= 0.0f) return false;
+
+        World* w = const_cast<World*>(world);
+
+        // Only render on boundaries
+        return (x == 0 || y == 0 || z == 0 ||
+                (x == w->sizeX() - 1 && y < w->sizeY() - 1 && z < w->sizeZ() - 1) ||
+                (y == w->sizeY() - 1 && z < w->sizeZ() - 1 && x < w->sizeX() - 1) ||
+                (z == w->sizeZ() - 1 && x < w->sizeX() - 1 && y < w->sizeY() - 1));
+    }
+
+    RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
+                                 GraphicsRenderer* renderer) const override {
+        RenderConfig config;
+        config.mode = RenderMode::PLANES;
+
+        World* w = const_cast<World*>(world);
+        float cstate = getCellState(cell, world);
+        float unmap = 1.0f - cstate;
+
+        // Determine which boundaries we're on
+        bool onXNeg = (x == 0);
+        bool onYNeg = (y == 0);
+        bool onZNeg = (z == 0);
+        bool onXPos = (x == w->sizeX() - 1 && y < w->sizeY() - 1 && z < w->sizeZ() - 1);
+        bool onYPos = (y == w->sizeY() - 1 && z < w->sizeZ() - 1 && x < w->sizeX() - 1);
+        bool onZPos = (z == w->sizeZ() - 1 && x < w->sizeX() - 1 && y < w->sizeY() - 1);
+
+        // Determine fill vs wireframe based on cell state history
+        float mapState = cell->states[w->index()];
+        bool shouldFill = (mapState > 0.0f && mapState < 2.0f);
+
+        // Store rendering info in custom fields
+        config.customFloats["unmap"] = unmap;
+        config.customFloats["mapState"] = mapState;
+        config.customFloats["shouldFill"] = shouldFill ? 1.0f : 0.0f;
+
+        config.customFloats["onXNeg"] = onXNeg ? 1.0f : 0.0f;
+        config.customFloats["onYNeg"] = onYNeg ? 1.0f : 0.0f;
+        config.customFloats["onZNeg"] = onZNeg ? 1.0f : 0.0f;
+        config.customFloats["onXPos"] = onXPos ? 1.0f : 0.0f;
+        config.customFloats["onYPos"] = onYPos ? 1.0f : 0.0f;
+        config.customFloats["onZPos"] = onZPos ? 1.0f : 0.0f;
+
+        // Base color with subtle audio reactivity
+        ColorA baseColor = applyMapping(unmap);
+
+        // Subtle audio reactivity: amplitude modulates brightness
+        float audioMod = 1.0f + (getAudioAmplitude(renderer) * 0.2f);  // 0-20% boost
+        baseColor.r = std::min(baseColor.r * audioMod, 1.0f);
+        baseColor.g = std::min(baseColor.g * audioMod, 1.0f);
+        baseColor.b = std::min(baseColor.b * audioMod, 1.0f);
+        config.color = baseColor;
+
+        return config;
+    }
+
+    void update(float time, float dt) override {
+        mTime = time;
+    }
+};
+
+// ============================================================================
+// Pattern11: Horizontal bars on specific Z slices (pattern11)
+// ============================================================================
+class Pattern11 : public Pattern {
+public:
+    Pattern11() : Pattern(11) {}
+
+    string getName() const override { return "Horizontal Bars"; }
+    string getDescription() const override { return "Draws horizontal bars on specific Z slices"; }
+
+    bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
+        if (!mActive) return false;
+        if (cell->phase <= 0.0f) return false;
+
+        World* w = const_cast<World*>(world);
+        int midZ = w->sizeZ() / 2;
+
+        // Only render on specific Z slices: 0, midZ-3, midZ, midZ+3, sizeZ-1
+        return (z == 0 || z == midZ - 3 || z == midZ || z == midZ + 3 || z == w->sizeZ() - 1);
+    }
+
+    RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
+                                 GraphicsRenderer* renderer) const override {
+        RenderConfig config;
+        config.mode = RenderMode::CUBES;
+
+        World* w = const_cast<World*>(world);
+        float cstate = getCellState(cell, world);
+
+        // Calculate mapState from cell state history
+        float maxState = w->rule()->numStates() - 1;
+        float mapState = (maxState - cell->states[w->index()]) * (1.0f / maxState);
+
+        // Color with subtle audio reactivity
+        ColorA baseColor = applyMapping(mapState);
+
+        // Subtle audio reactivity: mid frequencies modulate brightness
+        float audioMod = 1.0f + (getAudioBand(renderer, 1) * 0.25f);  // 0-25% boost from mids
+        baseColor.r = std::min(baseColor.r * audioMod, 1.0f);
+        baseColor.g = std::min(baseColor.g * audioMod, 1.0f);
+        baseColor.b = std::min(baseColor.b * audioMod, 1.0f);
+        config.color = baseColor;
+
+        // Horizontal bar dimensions
+        // Original: xW = fragSizeX * 4.0 + (mapState * fragSizeX)
+        // yH = zD = fragSizeX * 0.25
+        float unmap = 1.0f - cstate;
+        config.scale = vec3(
+            4.0f + mapState,  // X - long horizontal bar
+            0.25f,            // Y - thin
+            0.25f             // Z - thin
+        );
+
+        // Y position offset (original: yB = y * (fragSizeX * 0.5) + (fragSizeX * 0.25))
+        // This compresses Y and offsets it
+        config.customFloats["yCompress"] = 0.5f;
+        config.customFloats["yOffset"] = 0.25f;
+
+        return config;
+    }
+
+    void update(float time, float dt) override {
+        mTime = time;
+    }
+};
+
+// ============================================================================
+// Pattern12: Sphere + filled cube + wireframe cube composite (pattern12)
+// ============================================================================
+class Pattern12 : public Pattern {
+public:
+    Pattern12() : Pattern(12) {}
+
+    string getName() const override { return "Composite Sphere+Cube"; }
+    string getDescription() const override { return "Draws sphere, filled cube, and wireframe cube with state-based sizing"; }
+
+    bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
+        if (!mActive) return false;
+
+        World* w = const_cast<World*>(world);
+        float cellState = cell->states[w->index()];
+
+        // Only render if state is between 0 and 4 (exclusive of 0, inclusive of 4)
+        return (cellState > 0.0f && cellState <= 4.0f);
+    }
+
+    RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
+                                 GraphicsRenderer* renderer) const override {
+        RenderConfig config;
+        config.mode = RenderMode::CUSTOM;  // Will use custom rendering in drawFragment
+
+        World* w = const_cast<World*>(world);
+        float cellState = cell->states[w->index()];
+
+        // Calculate mapState with fixed maxState of 4
+        float maxState = 4.0f;
+        float mapState = (maxState - cellState) * (1.0f / maxState);
+
+        // Store data for custom rendering
+        config.customFloats["mapState"] = mapState;
+
+        // Base color
+        ColorA baseColor = applyMapping(mapState);
+
+        // Subtle audio reactivity: low frequencies modulate brightness
+        float audioMod = 1.0f + (getAudioBand(renderer, 0) * 0.25f);  // 0-25% boost from bass
+        baseColor.r = std::min(baseColor.r * audioMod, 1.0f);
+        baseColor.g = std::min(baseColor.g * audioMod, 1.0f);
+        baseColor.b = std::min(baseColor.b * audioMod, 1.0f);
+
+        config.color = baseColor;
+
+        return config;
+    }
+
+    void update(float time, float dt) override {
+        mTime = time;
+    }
+};
+
+// ============================================================================
+// Pattern13: Network visualization with cube-mapped spheres and cylinder connections (pattern13)
+// ============================================================================
+class Pattern13 : public Pattern {
+public:
+    Pattern13() : Pattern(13) {}
+
+    string getName() const override { return "Network Spheres"; }
+    string getDescription() const override { return "Cube-mapped spheres with thin cylinders connecting neighbors in network style"; }
+
+    bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
+        if (!mActive) return false;
+
+        World* w = const_cast<World*>(world);
+
+        // Filter: inside boundaries, state > 0, and on 4-grid
+        if (x <= 0 || y <= 0 || z <= 0 ||
+            x >= w->sizeX() - 1 || y >= w->sizeY() - 1 || z >= w->sizeZ() - 1) {
+            return false;
+        }
+
+        if (cell->phase <= 0.0f) return false;
+
+        // Only render on every 4th coordinate (creates sparser network)
+        return (x % 4 == 0 || y % 4 == 0 || z % 4 == 0);
+    }
+
+    RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
+                                 GraphicsRenderer* renderer) const override {
+        RenderConfig config;
+        config.mode = RenderMode::CUSTOM;  // Custom rendering for sphere + cylinders
+
+        World* w = const_cast<World*>(world);
+        float cellState = cell->states[w->index()];
+
+        // Calculate mapState
+        float maxState = w->rule()->numStates() - 1;
+        float mapState = (maxState - cellState) * (1.0f / maxState);
+
+        // Circular motion offset (original pattern has sin/cos motion)
+        float angle = (1.0f - mapState) * 2.0f * M_PI;
+        vec3 circularOffset(
+            sin(angle),  // X offset
+            cos(angle),  // Y offset
+            sin(angle)   // Z offset
+        );
+
+        config.customFloats["mapState"] = mapState;
+        config.customFloats["offsetX"] = circularOffset.x;
+        config.customFloats["offsetY"] = circularOffset.y;
+        config.customFloats["offsetZ"] = circularOffset.z;
+        config.customFloats["cellState"] = cellState;
+
+        // Base color
+        ColorA baseColor = applyMapping(mapState);
+
+        // Subtle audio reactivity: high frequencies modulate brightness
+        float audioMod = 1.0f + (getAudioBand(renderer, 2) * 0.25f);  // 0-25% boost from highs
+        baseColor.r = std::min(baseColor.r * audioMod, 1.0f);
+        baseColor.g = std::min(baseColor.g * audioMod, 1.0f);
+        baseColor.b = std::min(baseColor.b * audioMod, 1.0f);
+
+        config.color = baseColor;
+
+        return config;
+    }
+
+    void update(float time, float dt) override {
+        mTime = time;
+    }
+};
+
+// ============================================================================
+// Pattern14: Textured cubes with circular motion (pattern19)
+// ============================================================================
+class Pattern14 : public Pattern {
+private:
+    mutable gl::TextureRef mTexture;  // Mutable to allow lazy loading in const method
+
+public:
+    Pattern14() : Pattern(14) {}
+
+    string getName() const override { return "Circular Motion Cubes"; }
+    string getDescription() const override { return "Textured cubes with circular motion using 04.png"; }
+
+    bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
+        if (!mActive) return false;
+
+        World* w = const_cast<World*>(world);
+
+        // Filter: inside boundaries, state > 0, and on 4-grid
+        if (x <= 0 || y <= 0 || z <= 0 ||
+            x >= w->sizeX() - 1 || y >= w->sizeY() - 1 || z >= w->sizeZ() - 1) {
+            return false;
+        }
+
+        if (cell->phase <= 0.0f) return false;
+
+        // Only render on every 4th coordinate (same as Pattern13)
+        return (x % 4 == 0 || y % 4 == 0 || z % 4 == 0);
+    }
+
+    RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
+                                 GraphicsRenderer* renderer) const override {
+        RenderConfig config;
+        config.mode = RenderMode::CUBES;
+
+        World* w = const_cast<World*>(world);
+        float cellState = cell->states[w->index()];
+
+        // Lazy load texture
+        if (!mTexture) {
+            try {
+                auto imgSource = loadImage(app::loadAsset("04.png"));
+                gl::Texture::Format fmt;
+                fmt.setWrap(GL_REPEAT, GL_REPEAT);
+                fmt.setMinFilter(GL_LINEAR);
+                fmt.setMagFilter(GL_LINEAR);
+                mTexture = gl::Texture::create(imgSource, fmt);
+                console() << "Pattern14: Loaded texture from 04.png successfully!" << std::endl;
+            }
+            catch (const std::exception& e) {
+                console() << "Pattern14: Failed to load texture: " << e.what() << std::endl;
+            }
+        }
+
+        config.texture = mTexture;
+
+        // Calculate mapState
+        float maxState = w->rule()->numStates() - 1;
+        float mapState = (maxState - cellState) * (1.0f / maxState);
+
+        // Circular motion offset (same as Pattern13)
+        float angle = (1.0f - mapState) * 2.0f * M_PI;
+        config.offset = vec3(
+            sin(angle),  // X offset
+            cos(angle),  // Y offset
+            sin(angle)   // Z offset
+        );
+
+        // Cube size - state == 1.0 uses fixed size, otherwise uses mapState
+        vec3 cubeScale;
+        if (cellState == 1.0f) {
+            cubeScale = vec3(1.5f, 1.5f, 1.5f);
+        } else {
+            cubeScale = vec3(mapState * 1.5f, mapState * 1.5f, mapState * 1.5f);
+        }
+        config.scale = cubeScale;
+
+        // Color
+        ColorA baseColor = applyMapping(mapState);
+
+        // Subtle audio reactivity: mid frequencies modulate brightness
+        float audioMod = 1.0f + (getAudioBand(renderer, 1) * 0.3f);  // 0-30% boost from mids
+        baseColor.r = std::min(baseColor.r * audioMod, 1.0f);
+        baseColor.g = std::min(baseColor.g * audioMod, 1.0f);
+        baseColor.b = std::min(baseColor.b * audioMod, 1.0f);
+
+        config.color = baseColor;
+
+        return config;
+    }
+
+    void update(float time, float dt) override {
+        mTime = time;
+    }
+};
+
+// ============================================================================
+// Pattern15: Random points with BMU glow (pattern22)
+// ============================================================================
+class Pattern15 : public Pattern {
+public:
+    Pattern15() : Pattern(15) {}
+
+    string getName() const override { return "Random Points"; }
+    string getDescription() const override { return "Random points within cells with BMU glow effect"; }
+
+    bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
+        if (!mActive) return false;
+
+        World* w = const_cast<World*>(world);
+        float cstate = getCellState(cell, world);
+        return (w->ruleType() == CONT || cstate != 0.0f);
+    }
+
+    RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
+                                 GraphicsRenderer* renderer) const override {
+        RenderConfig config;
+        config.mode = RenderMode::CUSTOM;  // Custom rendering for multiple random points
+
+        World* w = const_cast<World*>(world);
+        float cstate = getCellState(cell, world);
+
+        // Store cell info for custom rendering
+        config.customFloats["cstate"] = cstate;
+        config.customFloats["x"] = static_cast<float>(x);
+        config.customFloats["y"] = static_cast<float>(y);
+        config.customFloats["z"] = static_cast<float>(z);
+
+        // Check if this cell is the BMU for glow effect
+        bool isBMU = (w->currentBMU() &&
+                      w->currentBMU()->x == x &&
+                      w->currentBMU()->y == y &&
+                      w->currentBMU()->z == z);
+        config.customFloats["isBMU"] = isBMU ? 1.0f : 0.0f;
+
+        // Base color
+        config.color = applyMapping(cstate);
+
+        return config;
+    }
+
+    void update(float time, float dt) override {
+        mTime = time;
+    }
+};
+
+// ============================================================================
+// Pattern16: Conditional plane rectangles based on neighbor states (pattern23)
+// ============================================================================
+class Pattern16 : public Pattern {
+public:
+    Pattern16() : Pattern(16) {}
+
+    string getName() const override { return "Neighbor Planes"; }
+    string getDescription() const override { return "Draws plane rectangles based on neighbor cell states"; }
+
+    bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
+        if (!mActive) return false;
+
+        World* w = const_cast<World*>(world);
+        float cstate = getCellState(cell, world);
+
+        // Must be inside boundaries and have state > 0
+        return (cstate > 0.0f &&
+                x > 0 && y > 0 && z > 0 &&
+                x < w->sizeX() - 1 && y < w->sizeY() - 1 && z < w->sizeZ() - 1);
+    }
+
+    RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
+                                 GraphicsRenderer* renderer) const override {
+        RenderConfig config;
+        config.mode = RenderMode::CUSTOM;  // Custom rendering to check neighbors
+
+        World* w = const_cast<World*>(world);
+        float cellState = cell->states[w->index()];
+
+        // Calculate unmap value
+        float maxState = w->rule()->numStates() - 1;
+        float unmap = 1.0f - (cell->phase / maxState);
+
+        // Store data for custom rendering
+        config.customFloats["unmap"] = unmap;
+        config.customFloats["cellState"] = cellState;
+
+        // Base color
+        config.color = applyMapping(unmap);
+
+        return config;
+    }
+
+    void update(float time, float dt) override {
+        mTime = time;
+    }
+};
+
+// ============================================================================
+// Pattern17: Combined animated lines (pattern24 + pattern25)
+// ============================================================================
+class Pattern17 : public Pattern {
+public:
+    Pattern17() : Pattern(17) {}
+
+    string getName() const override { return "Combined Animated Lines"; }
+    string getDescription() const override { return "Animated lines with sine wave motion and cross patterns"; }
+
+    bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
+        if (!mActive) return false;
+
+        World* w = const_cast<World*>(world);
+        float cstate = getCellState(cell, world);
+
+        // Only render on every 5th Z layer and if cell has state
+        return ((w->ruleType() == CONT || cstate != 0.0f) && z % 5 == 0);
+    }
+
+    RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
+                                 GraphicsRenderer* renderer) const override {
+        RenderConfig config;
+        config.mode = RenderMode::CUSTOM;  // Custom rendering for multiple lines per cell
+
+        World* w = const_cast<World*>(world);
+        float cstate = getCellState(cell, world);
+
+        // Store cell state for custom rendering
+        config.customFloats["cstate"] = cstate;
+        config.customFloats["x"] = static_cast<float>(x);
+        config.customFloats["y"] = static_cast<float>(y);
+        config.customFloats["z"] = static_cast<float>(z);
+
+        // Base color (will be modulated in custom rendering)
+        config.color = applyMapping(cstate);
+
+        return config;
+    }
+
+    void update(float time, float dt) override {
+        mTime = time;
+    }
+};
+
+// ============================================================================
+// Pattern18: Spherical polygon quads with modulated theta/phi (pattern31)
+// ============================================================================
+class Pattern18 : public Pattern {
+public:
+    Pattern18() : Pattern(18) {}
+
+    string getName() const override { return "Spherical Modulated Quads"; }
+    string getDescription() const override { return "Spherical coordinate quads with theta/phi modulation and per-vertex colors"; }
+
+    bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
+        if (!mActive) return false;
+
+        // Only render on every 4th Z layer and if cell has state > 0
+        return (cell->phase > 0.0f && z % 4 == 0);
+    }
+
+    RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
+                                 GraphicsRenderer* renderer) const override {
+        RenderConfig config;
+        config.mode = RenderMode::POLYGON;
+
+        World* w = const_cast<World*>(world);
+        float cellState = cell->states[w->index()];
+
+        // Calculate unmap value
+        float maxState = w->rule()->numStates() - 1;
+        float unmap = 1.0f - (cellState / maxState);
+
+        // Scale factor to match Pattern00's world extent
+        float worldScale = (w->sizeX() + w->sizeY() + w->sizeZ()) / 3.0f;
+        float fragSizeScale = worldScale * 0.5f;
+
+        // Base spherical coordinates (will be modulated)
+        float baseTheta = (2.0f * M_PI / w->sizeX()) * x;
+        float basePhi = (2.0f * M_PI / w->sizeY()) * y;
+
+        // Radius with state-based modulation
+        float rho = z * (fragSizeScale * 0.5f) + (fragSizeScale * mapf(unmap, -2.0f, 2.0f));
+
+        // Theta/phi modulation factor
+        float modulation = mapf(unmap, 0.2f, 0.8f);
+
+        // Subtle audio reactivity: overall amplitude affects modulation
+        float audioMod = 1.0f + (getAudioAmplitude(renderer) * 0.15f);  // 0-15% boost
+        modulation *= audioMod;
+
+        // Calculate 4 vertices in spherical coords with modulated theta/phi
+        // Vertex 0: (x, y)
+        float theta0 = baseTheta * modulation;
+        float phi0 = basePhi * modulation;
+        config.polygonVertices[0].x = rho * cos(theta0) * cos(phi0);
+        config.polygonVertices[0].y = rho * sin(theta0) * cos(phi0);
+        config.polygonVertices[0].z = rho * sin(phi0);
+
+        // Vertex 1: (x-1, y)
+        float baseTheta1 = (2.0f * M_PI / w->sizeX()) * (x - 1);
+        float theta1 = baseTheta1 * modulation;
+        float phi1 = basePhi * modulation;
+        config.polygonVertices[1].x = rho * cos(theta1) * cos(phi1);
+        config.polygonVertices[1].y = rho * sin(theta1) * cos(phi1);
+        config.polygonVertices[1].z = rho * sin(phi1);
+
+        // Vertex 2: (x-1, y-1)
+        float basePhi2 = (2.0f * M_PI / w->sizeY()) * (y - 1);
+        float theta2 = baseTheta1 * modulation;
+        float phi2 = basePhi2 * modulation;
+        config.polygonVertices[2].x = rho * cos(theta2) * cos(phi2);
+        config.polygonVertices[2].y = rho * sin(theta2) * cos(phi2);
+        config.polygonVertices[2].z = rho * sin(phi2);
+
+        // Vertex 3: (x, y-1)
+        float theta3 = baseTheta * modulation;
+        float phi3 = basePhi2 * modulation;
+        config.polygonVertices[3].x = rho * cos(theta3) * cos(phi3);
+        config.polygonVertices[3].y = rho * sin(theta3) * cos(phi3);
+        config.polygonVertices[3].z = rho * sin(phi3);
+
+        // Per-vertex colors with different modulations
+        // Vertex 0: base unmap
+        config.polygonColors[0] = applyMapping(unmap);
+
+        // Vertex 1: sin(unmap * PI)
+        float otunmap1 = sin(unmap * M_PI);
+        config.polygonColors[1] = applyMapping(otunmap1);
+
+        // Vertex 2: cos(unmap * PI)
+        float otunmap2 = cos(unmap * M_PI);
+        config.polygonColors[2] = applyMapping(otunmap2);
+
+        // Vertex 3: sin(unmap * PI)
+        config.polygonColors[3] = applyMapping(otunmap1);
+
+        return config;
+    }
+
+    void update(float time, float dt) override {
+        mTime = time;
+    }
+};
+
+// ============================================================================
+// Pattern19: Dynamic neighbor polygon fan (pattern35) - wireframe version
+// ============================================================================
+class Pattern19 : public Pattern {
+public:
+    Pattern19() : Pattern(19) {}
+
+    string getName() const override { return "Neighbor Polygon Fan"; }
+    string getDescription() const override { return "Dynamic polygon connecting cell to all active neighbors with per-vertex colors (wireframe)"; }
+
+    bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
+        if (!mActive) return false;
+
+        World* w = const_cast<World*>(world);
+
+        // Must be inside boundaries, have state > 0, and on 4-grid
+        if (cell->phase <= 0.0f) return false;
+        if (x <= 0 || y <= 0 || z <= 0 ||
+            x >= w->sizeX() - 1 || y >= w->sizeY() - 1 || z >= w->sizeZ() - 1) {
+            return false;
+        }
+
+        // Only render on every 4th coordinate (creates sparser pattern)
+        return (x % 4 == 0 || y % 4 == 0 || z % 4 == 0);
+    }
+
+    RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
+                                 GraphicsRenderer* renderer) const override {
+        RenderConfig config;
+        config.mode = RenderMode::CUSTOM;  // Custom rendering for dynamic polygon
+
+        World* w = const_cast<World*>(world);
+        float cellState = cell->states[w->index()];
+
+        // Calculate unmap value for center vertex
+        float maxState = w->rule()->numStates() - 1;
+        float unmap = 1.0f - (cell->phase / maxState);
+
+        // Store data for custom rendering
+        config.customFloats["unmap"] = unmap;
+        config.customFloats["x"] = static_cast<float>(x);
+        config.customFloats["y"] = static_cast<float>(y);
+        config.customFloats["z"] = static_cast<float>(z);
+        config.customFloats["filled"] = 0.0f;  // Wireframe
+
+        // Base color for center vertex
+        config.color = applyMapping(unmap);
+
+        return config;
+    }
+
+    void update(float time, float dt) override {
+        mTime = time;
+    }
+};
+
+// ============================================================================
+// Pattern20: Dynamic neighbor polygon fan (pattern35) - filled version
+// ============================================================================
+class Pattern20 : public Pattern {
+public:
+    Pattern20() : Pattern(20) {}
+
+    string getName() const override { return "Neighbor Polygon Fan (Filled)"; }
+    string getDescription() const override { return "Dynamic filled polygon connecting cell to all active neighbors with per-vertex colors"; }
+
+    bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
+        if (!mActive) return false;
+
+        World* w = const_cast<World*>(world);
+
+        // Must be inside boundaries, have state > 0, and on 4-grid
+        if (cell->phase <= 0.0f) return false;
+        if (x <= 0 || y <= 0 || z <= 0 ||
+            x >= w->sizeX() - 1 || y >= w->sizeY() - 1 || z >= w->sizeZ() - 1) {
+            return false;
+        }
+
+        // Only render on every 4th coordinate (creates sparser pattern)
+        return (x % 4 == 0 || y % 4 == 0 || z % 4 == 0);
+    }
+
+    RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
+                                 GraphicsRenderer* renderer) const override {
+        RenderConfig config;
+        config.mode = RenderMode::CUSTOM;  // Custom rendering for dynamic polygon
+
+        World* w = const_cast<World*>(world);
+        float cellState = cell->states[w->index()];
+
+        // Calculate unmap value for center vertex
+        float maxState = w->rule()->numStates() - 1;
+        float unmap = 1.0f - (cell->phase / maxState);
+
+        // Store data for custom rendering
+        config.customFloats["unmap"] = unmap;
+        config.customFloats["x"] = static_cast<float>(x);
+        config.customFloats["y"] = static_cast<float>(y);
+        config.customFloats["z"] = static_cast<float>(z);
+        config.customFloats["filled"] = 1.0f;  // Filled
+
+        // Base color for center vertex
+        config.color = applyMapping(unmap);
+
+        return config;
+    }
+
+    void update(float time, float dt) override {
+        mTime = time;
+    }
+};
+
+// ============================================================================
+// Pattern21: Elongated cubes on grid planes (pattern34)
+// ============================================================================
+class Pattern21 : public Pattern {
+public:
+    Pattern21() : Pattern(21) {}
+
+    string getName() const override { return "Grid Plane Bars"; }
+    string getDescription() const override { return "Elongated cubes on x%5, y%5, z%5 grid planes with state-based sizing"; }
+
+    bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
+        if (!mActive) return false;
+
+        // Must have state > 0 and be on 5-grid
+        if (cell->phase <= 0.0f) return false;
+        return (x % 5 == 0 || y % 5 == 0 || z % 5 == 0);
+    }
+
+    RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
+                                 GraphicsRenderer* renderer) const override {
+        RenderConfig config;
+        config.mode = RenderMode::CUBES;
+
+        World* w = const_cast<World*>(world);
+        float cellState = cell->states[w->index()];
+
+        // Calculate unmap value
+        float maxState = w->rule()->numStates() - 1;
+        float unmap = 1.0f - (cell->phase / maxState);
+
+        // Base cube size
+        float baseSize = 0.33f;
+
+        // Elongated size based on unmap (mapf(fragSizeX * unmap, 1.0, 4.0) in original)
+        // Simplified: elongation factor from 1.0 to 4.0 based on unmap
+        float elongation = mapf(unmap, 1.0f, 4.0f);
+
+        // Determine scale based on which grid plane
+        vec3 scale(baseSize, baseSize, baseSize);
+
+        if (x % 5 == 0) {
+            // Elongate in Z
+            scale.z = baseSize + elongation;
+        }
+        if (y % 5 == 0) {
+            // Elongate in X
+            scale.x = baseSize + elongation;
+        }
+        if (z % 5 == 0) {
+            // Elongate in Y
+            scale.y = baseSize + elongation;
+        }
+
+        config.scale = scale;
+
+        // Color with subtle audio reactivity
+        ColorA baseColor = applyMapping(unmap);
+
+        // Subtle audio reactivity: low frequencies modulate brightness
+        float audioMod = 1.0f + (getAudioBand(renderer, 0) * 0.25f);  // 0-25% boost from bass
+        baseColor.r = std::min(baseColor.r * audioMod, 1.0f);
+        baseColor.g = std::min(baseColor.g * audioMod, 1.0f);
+        baseColor.b = std::min(baseColor.b * audioMod, 1.0f);
+
+        config.color = baseColor;
+
+        return config;
+    }
+
+    void update(float time, float dt) override {
+        mTime = time;
+    }
+};
+
+// ============================================================================
+// Pattern22: Textured cubes with pattern15 mappings (using 03.png)
+// ============================================================================
+class Pattern22 : public Pattern {
+private:
+    mutable gl::TextureRef mTexture;  // Mutable to allow lazy loading
+
+public:
+    Pattern22() : Pattern(22) {}
+
+    string getName() const override { return "Grid Textured Cubes"; }
+    string getDescription() const override { return "Textured cubes on 4-grid with inverse state sizing using 08.png"; }
+
+    bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
+        if (!mActive) return false;
+
+        // From pattern15: (x % 4 == 0 || y % 4 == 0 || z % 4 == 0) && state > 0.0
+        if (cell->phase <= 0.0f) return false;
+        return (x % 4 == 0 || y % 4 == 0 || z % 4 == 0);
+    }
+
+    RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
+                                 GraphicsRenderer* renderer) const override {
+        RenderConfig config;
+        config.mode = RenderMode::CUBES;
+
+        World* w = const_cast<World*>(world);
+
+        // Lazy load texture
+        if (!mTexture) {
+            try {
+                auto imgSource = loadImage(app::loadAsset("08.png"));
+                gl::Texture::Format fmt;
+                fmt.setWrap(GL_REPEAT, GL_REPEAT);
+                fmt.setMinFilter(GL_LINEAR);
+                fmt.setMagFilter(GL_LINEAR);
+                mTexture = gl::Texture::create(imgSource, fmt);
+                console() << "Pattern22: Loaded texture from 08.png successfully!" << std::endl;
+            }
+            catch (const std::exception& e) {
+                console() << "Pattern22: Failed to load texture: " << e.what() << std::endl;
+            }
+        }
+
+        config.texture = mTexture;
+
+        // Pattern15 state calculation
+        float cstate;
+        if (w->ruleType() == CONT) {
+            cstate = cell->phase;
+        } else {
+            if (cell->phase != 0.0f) {
+                cstate = 1.0f / cell->phase;  // Inverse of state
+            } else {
+                cstate = 0.0f;
+            }
+        }
+
+        // Map to 0.75-1.3 range
+        cstate = mapf(cstate, 0.75f, 1.3f);
+
+        // Size: fragSizeX * cstate (from pattern15)
+        // In normalized coords, this becomes just cstate
+        config.scale = vec3(cstate, cstate, cstate);
+
+        // Color mapping using cstate
+        ColorA baseColor = applyMapping(cstate);
+
+        // Subtle audio reactivity: mid frequencies modulate brightness
+        float audioMod = 1.0f + (getAudioBand(renderer, 1) * 0.25f);  // 0-25% boost from mids
+        baseColor.r = std::min(baseColor.r * audioMod, 1.0f);
+        baseColor.g = std::min(baseColor.g * audioMod, 1.0f);
+        baseColor.b = std::min(baseColor.b * audioMod, 1.0f);
+
+        config.color = baseColor;
+
+        return config;
+    }
+
+    void update(float time, float dt) override {
+        mTime = time;
+    }
+};
+
+// ============================================================================
 // Pattern Factory
 // ============================================================================
 std::unique_ptr<Pattern> PatternFactory::create(int id) {
@@ -731,6 +1561,19 @@ std::unique_ptr<Pattern> PatternFactory::create(int id) {
         case 7: return std::unique_ptr<Pattern>(new Pattern07());
         case 8: return std::unique_ptr<Pattern>(new Pattern08());
         case 9: return std::unique_ptr<Pattern>(new Pattern09());
+        case 10: return std::unique_ptr<Pattern>(new Pattern10());
+        case 11: return std::unique_ptr<Pattern>(new Pattern11());
+        case 12: return std::unique_ptr<Pattern>(new Pattern12());
+        case 13: return std::unique_ptr<Pattern>(new Pattern13());
+        case 14: return std::unique_ptr<Pattern>(new Pattern14());
+        case 15: return std::unique_ptr<Pattern>(new Pattern15());
+        case 16: return std::unique_ptr<Pattern>(new Pattern16());
+        case 17: return std::unique_ptr<Pattern>(new Pattern17());
+        case 18: return std::unique_ptr<Pattern>(new Pattern18());
+        case 19: return std::unique_ptr<Pattern>(new Pattern19());
+        case 20: return std::unique_ptr<Pattern>(new Pattern20());
+        case 21: return std::unique_ptr<Pattern>(new Pattern21());
+        case 22: return std::unique_ptr<Pattern>(new Pattern22());
         default: return nullptr;
     }
 }

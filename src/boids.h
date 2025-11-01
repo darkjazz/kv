@@ -3,23 +3,26 @@
  *  lambdaApp
  *
  *  Created by alo on 13/07/2012.
- *  
+ *
  *	This file is part of lambdaApp.
  *
  *	lambdaApp is free software: you can redistribute it and/or modify
  *	it under the terms of the GNU General Public License as published by
  *	the Free Software Foundation, either version 3 of the License, or
  *	(at your option) any later version.
- 
+
  *	lambdaApp is distributed in the hope that it will be useful,
  *	but WITHOUT ANY WARRANTY; without even the implied warranty of
  *	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *	GNU General Public License for more details.
- 
+
  *	You should have received a copy of the GNU General Public License
- *	along with lambdaApp.  If not, see <http://www.gnu.org/licenses/>. 
+ *	along with lambdaApp.  If not, see <http://www.gnu.org/licenses/>.
  *
  */
+
+#ifndef BOIDS_H
+#define BOIDS_H
 
 #include "cinder/Vector.h"
 #include <vector>
@@ -81,6 +84,8 @@ private:
 	int _num;
 	vector<Boid> _boids;
 	CenterType _ctype;
-	int _minLifeExpectancy, _maxLifeExpectancy; 
-	
+	int _minLifeExpectancy, _maxLifeExpectancy;
+
 };
+
+#endif

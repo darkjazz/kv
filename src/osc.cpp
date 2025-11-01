@@ -232,10 +232,27 @@ void OSCMessenger::setUpListener() {
             pattern->setAudioReactivity(msg.getArgFloat(1));
         }
     });
+    // Boid pattern system - matches old lambda app format
     _listener.setListener( "/lambda/graphics/boidpattern",
     [&]( const osc::Message &msg ){
-        _ogl->boidPatternLib[msg.getArgInt32(0)].active = msg.getArgInt32(1) == 1;
-        _ogl->boidPatternLib[msg.getArgInt32(0)].mapIndex = msg.getArgInt32(2);
+        // Old format: patternId(int), active(int), mapIndex(int)
+        // mapIndex was used for different cubemap image sets (0-4) - now ignored
+        int patternId = msg.getArgInt32(0);
+        bool active = msg.getArgInt32(1) == 1;
+        int mapIndex = msg.getArgInt32(2);  // Read for compatibility but ignore
+
+        // Update new boid pattern system
+        BoidPattern* pattern = _ogl->getBoidPattern(patternId);
+        if (pattern) {
+            pattern->setActive(active);
+            // mapIndex ignored - different cubemap sets are now separate patterns
+        }
+
+        // Keep legacy system for backward compatibility
+        if (patternId >= 0 && patternId < numBoidPatterns) {
+            _ogl->boidPatternLib[patternId].active = active;
+            _ogl->boidPatternLib[patternId].mapIndex = mapIndex;  // Kept for legacy compatibility
+        }
     });
     _listener.setListener( "/lambda/boids/init",
     [&]( const osc::Message &msg ){
@@ -266,6 +283,32 @@ void OSCMessenger::setUpListener() {
         delete _boids;
         _boids = nullptr;
         _ogl->boids = nullptr;
+    });
+    // Additional boid pattern control messages
+    _listener.setListener( "/lambda/boids/pattern/active",
+    [&]( const osc::Message &msg ){
+        int patternId = msg.getArgInt32(0);
+        bool active = msg.getArgInt32(1) == 1;
+        BoidPattern* pattern = _ogl->getBoidPattern(patternId);
+        if (pattern) {
+            pattern->setActive(active);
+        }
+    });
+    _listener.setListener( "/lambda/boids/pattern/color",
+    [&]( const osc::Message &msg ){
+        int patternId = msg.getArgInt32(0);
+        BoidPattern* pattern = _ogl->getBoidPattern(patternId);
+        if (pattern) {
+            pattern->setColor(Color(msg.getArgFloat(1), msg.getArgFloat(2), msg.getArgFloat(3)));
+        }
+    });
+    _listener.setListener( "/lambda/boids/pattern/alpha",
+    [&]( const osc::Message &msg ){
+        int patternId = msg.getArgInt32(0);
+        BoidPattern* pattern = _ogl->getBoidPattern(patternId);
+        if (pattern) {
+            pattern->setAlpha(msg.getArgFloat(1));
+        }
     });
     _listener.setListener( "/lambda/framerate",
     [&]( const osc::Message &msg ){
