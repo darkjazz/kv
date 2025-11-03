@@ -241,11 +241,15 @@ void OSCMessenger::setUpListener() {
         bool active = msg.getArgInt32(1) == 1;
         int mapIndex = msg.getArgInt32(2);  // Read for compatibility but ignore
 
+        CI_LOG_I("Received boidpattern OSC: patternId=" << patternId << " active=" << active << " mapIndex=" << mapIndex);
+
         // Update new boid pattern system
         BoidPattern* pattern = _ogl->getBoidPattern(patternId);
         if (pattern) {
             pattern->setActive(active);
-            // mapIndex ignored - different cubemap sets are now separate patterns
+            CI_LOG_I("Set pattern " << patternId << " to active=" << active);
+        } else {
+            CI_LOG_E("Pattern " << patternId << " not found!");
         }
 
         // Keep legacy system for backward compatibility
@@ -277,6 +281,18 @@ void OSCMessenger::setUpListener() {
         _boids->alignment = msg.getArgFloat(2);
         _boids->separation = msg.getArgFloat(3);
         _boids->center = msg.getArgFloat(4);
+        // Update base values when manually setting parameters
+        _boids->baseCohesion = _boids->cohesion;
+        _boids->baseSeparation = _boids->separation;
+        _boids->baseAlignment = _boids->alignment;
+    });
+    _listener.setListener( "/lambda/boids/audio",
+    [&]( const osc::Message &msg ){
+        // Set audio reactivity for cohesion, separation, alignment
+        // Values 0.0-1.0 determine how much audio affects each parameter
+        _boids->audioReactivityCohesion = msg.getArgFloat(0);
+        _boids->audioReactivitySeparation = msg.getArgFloat(1);
+        _boids->audioReactivityAlignment = msg.getArgFloat(2);
     });
     _listener.setListener( "/lambda/boids/kill",
     [&]( const osc::Message &msg ){
@@ -296,7 +312,13 @@ void OSCMessenger::setUpListener() {
     });
     _listener.setListener( "/lambda/boids/pattern/color",
     [&]( const osc::Message &msg ){
-        int patternId = msg.getArgInt32(0);
+        // Read pattern ID - try as int first, fall back to float
+        int patternId;
+        try {
+            patternId = msg.getArgInt32(0);
+        } catch (...) {
+            patternId = (int)msg.getArgFloat(0);
+        }
         BoidPattern* pattern = _ogl->getBoidPattern(patternId);
         if (pattern) {
             pattern->setColor(Color(msg.getArgFloat(1), msg.getArgFloat(2), msg.getArgFloat(3)));
@@ -304,11 +326,32 @@ void OSCMessenger::setUpListener() {
     });
     _listener.setListener( "/lambda/boids/pattern/alpha",
     [&]( const osc::Message &msg ){
-        int patternId = msg.getArgInt32(0);
+        int patternId = (int)msg.getArgFloat(0);  // Accept float and convert to int
         BoidPattern* pattern = _ogl->getBoidPattern(patternId);
         if (pattern) {
             pattern->setAlpha(msg.getArgFloat(1));
         }
+    });
+    // Code panel / live coding messages
+    _listener.setListener( "/lambda/livecode/activate",
+    [&]( const osc::Message &msg ){
+        _ogl->codePanelActive = msg.getArgInt32(0) == 1;
+    });
+    _listener.setListener( "/lambda/livecode/map",
+    [&]( const osc::Message &msg ){
+        _ogl->codePanelMapped = msg.getArgInt32(0) == 1;
+    });
+    _listener.setListener( "/lambda/livecode/codeline",
+    [&]( const osc::Message &msg ){
+        _ogl->codePanel.addLine(msg.getArgString(0));
+    });
+    _listener.setListener( "/lambda/livecode/codetitle",
+    [&]( const osc::Message &msg ){
+        _ogl->codePanel.title = msg.getArgString(0);
+    });
+    _listener.setListener( "/lambda/livecode/fadeTime",
+    [&]( const osc::Message &msg ){
+        _ogl->codePanel.fadeTime = msg.getArgInt32(0);
     });
     _listener.setListener( "/lambda/framerate",
     [&]( const osc::Message &msg ){

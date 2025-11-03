@@ -22,6 +22,7 @@
  */
 
 #include "ogl.h"
+#include "cinder/BSpline.h"
 
 void GraphicsRenderer::setupOgl () {
 
@@ -271,22 +272,61 @@ void GraphicsRenderer::update() {
 		}
 	}
 
-	// Update boids
+	// Update boids with audio reactivity
 	if (boids) {
+		// Modulate boid parameters based on audio features
+		// Cohesion reacts to low frequencies (bass)
+		if (boids->audioReactivityCohesion > 0.0f) {
+			boids->cohesion = boids->baseCohesion * (1.0 + mAudioLowBand * boids->audioReactivityCohesion);
+		}
+
+		// Separation reacts to high frequencies (treble/percussion)
+		if (boids->audioReactivitySeparation > 0.0f) {
+			boids->separation = boids->baseSeparation * (1.0 + mAudioHighBand * boids->audioReactivitySeparation);
+		}
+
+		// Alignment reacts to mid frequencies (melody)
+		if (boids->audioReactivityAlignment > 0.0f) {
+			boids->alignment = boids->baseAlignment * (1.0 + mAudioMidBand * boids->audioReactivityAlignment);
+		}
+
 		boids->update();
 	}
 
 	if (ptrWorld->initialized()) {
 
+		// Use window width for all dimensions to maintain cubic proportions
 		fragSizeX = (double)(getWindowWidth() / ptrWorld->sizeX()) * 0.1;
-		fragSizeY = (double)(getWindowHeight() / ptrWorld->sizeY()) * 0.1;
+		fragSizeY = (double)(getWindowWidth() / ptrWorld->sizeY()) * 0.1;
 		fragSizeZ = (double)(getWindowWidth() / ptrWorld->sizeZ()) * 0.1;
 
 		hx = fragSizeX * ptrWorld->sizeX() * 0.5;
 		hy = fragSizeY * ptrWorld->sizeY() * 0.5;
+		hz = fragSizeZ * ptrWorld->sizeZ() * 0.5;
 	}
 
     mRotation = glm::rotate(mRotation, glm::radians(rotateAngle), rotateXYZ);
+
+	// Update camera based on boid attachment flags
+	if (boids && boids->numBoids() > 0) {
+		vec3 boidDimensions = boids->dimensions();
+		vec3 boidOffset = boidDimensions * 0.5f;
+
+		if (attachEyeToFirstBoid) {
+			Boid* firstBoid = boids->getBoidAtIndex(0);
+			vec3 boidPos = firstBoid->pos - boidOffset;
+
+			// Offset camera behind the boid along its velocity direction
+			vec3 velocity = glm::normalize(firstBoid->vec);
+			float offsetDistance = 20.0f;  // Distance behind boid
+			mEye = boidPos - velocity * offsetDistance + vec3(0, 5.0f, 0);  // Slightly above too
+		}
+
+		if (lookAtCentroid) {
+			vec3 centroid = boids->centroid();
+			mCenter = centroid - boidOffset;
+		}
+	}
 
 	mCam.lookAt( mEye, mCenter, mUp );
 	gl::setMatrices( mCam );
@@ -644,6 +684,12 @@ void GraphicsRenderer::drawCubeInstances() {
 }
 
 void GraphicsRenderer::drawSphereInstances() {
+	static bool loggedSphereDrawing = false;
+	if (!loggedSphereDrawing && !mSpherePositions.empty()) {
+		console() << "drawSphereInstances: " << mSpherePositions.size() << " spheres, mSphereMesh=" << (mSphereMesh ? "yes" : "no") << std::endl;
+		loggedSphereDrawing = true;
+	}
+
 	if (mSpherePositions.empty() || !mSphereMesh) {
 		return;
 	}
@@ -751,6 +797,11 @@ void GraphicsRenderer::drawSphereInstances() {
 		gl::ScopedTextureBind texBind(activeCubeMap, 0);
 		batch->drawInstanced(static_cast<GLsizei>(mSpherePositions.size()));
 	} else {
+		static bool loggedBatchDraw = false;
+		if (!loggedBatchDraw) {
+			console() << "Drawing " << mSpherePositions.size() << " sphere instances with standard shader" << std::endl;
+			loggedBatchDraw = true;
+		}
 		batch->drawInstanced(static_cast<GLsizei>(mSpherePositions.size()));
 	}
 }
@@ -1282,6 +1333,9 @@ void GraphicsRenderer::drawTriangleInstances() {
 }
 
 void GraphicsRenderer::endDraw() {
+	// Add boid instances to buffers before drawing
+	drawBoids();
+
 	// Draw all collected instances
 	drawCubeInstances();
 	drawSphereInstances();
@@ -1297,10 +1351,88 @@ void GraphicsRenderer::endDraw() {
     mGrid->end();
     mGrid->draw();
 
-	// Draw boids if they exist
-	drawBoids();
+	// Draw code panel if active
+	if (codePanelActive) {
+		if (codePanelMapped)
+			mapCodePanel();
+		else
+			drawCodePanel();
+	}
 
 	counter++;
+}
+
+void GraphicsRenderer::drawCodePanel() {
+	gl::pushMatrices();
+	gl::setMatricesWindow(getWindowSize());
+
+	codePanel.update(vec2(getWindowWidth(), getWindowHeight()));
+
+	gl::popMatrices();
+}
+
+void GraphicsRenderer::mapCodePanel() {
+	// Update texture and opacity counter
+	codePanel.bind();
+
+	if (!codePanel.texture) {
+		codePanel.unbind();
+		return;
+	}
+
+	gl::enableAlphaBlending();
+	gl::color(1.0f, 1.0f, 1.0f, codePanel.opacity);
+
+	float size = hx * 2;
+	Rectf rect = Rectf(-size/2, -size/2, size/2, size/2);
+
+	// Draw 6 faces of cube with texture mapped
+	gl::pushMatrices();
+
+	// Front face (Z+)
+	gl::pushMatrices();
+	gl::translate(0.0f, 0.0f, size/2);
+	gl::draw(codePanel.texture, rect);
+	gl::popMatrices();
+
+	// Back face (Z-)
+	gl::pushMatrices();
+	gl::translate(0.0f, 0.0f, -size/2);
+	gl::rotate(glm::radians(180.0f), 0.0f, 1.0f, 0.0f);
+	gl::draw(codePanel.texture, rect);
+	gl::popMatrices();
+
+	// Right face (X+)
+	gl::pushMatrices();
+	gl::translate(size/2, 0.0f, 0.0f);
+	gl::rotate(glm::radians(90.0f), 0.0f, 1.0f, 0.0f);
+	gl::draw(codePanel.texture, rect);
+	gl::popMatrices();
+
+	// Left face (X-)
+	gl::pushMatrices();
+	gl::translate(-size/2, 0.0f, 0.0f);
+	gl::rotate(glm::radians(-90.0f), 0.0f, 1.0f, 0.0f);
+	gl::draw(codePanel.texture, rect);
+	gl::popMatrices();
+
+	// Top face (Y+)
+	gl::pushMatrices();
+	gl::translate(0.0f, size/2, 0.0f);
+	gl::rotate(glm::radians(-90.0f), 1.0f, 0.0f, 0.0f);
+	gl::draw(codePanel.texture, rect);
+	gl::popMatrices();
+
+	// Bottom face (Y-)
+	gl::pushMatrices();
+	gl::translate(0.0f, -size/2, 0.0f);
+	gl::rotate(glm::radians(90.0f), 1.0f, 0.0f, 0.0f);
+	gl::draw(codePanel.texture, rect);
+	gl::popMatrices();
+
+	gl::popMatrices();
+
+	codePanel.unbind();
 }
 
 void GraphicsRenderer::drawBoids() {
@@ -1316,6 +1448,11 @@ void GraphicsRenderer::drawBoids() {
 			Boid* b = boids->getBoidAtIndex(0);
 			console() << "First boid pos: " << b->pos.x << "," << b->pos.y << "," << b->pos.z << std::endl;
 		}
+		console() << "Boid patterns: " << mBoidPatterns.size() << std::endl;
+		for (int i = 0; i < mBoidPatterns.size(); i++) {
+			console() << "  Pattern " << i << ": " << mBoidPatterns[i]->getName()
+			          << " active=" << mBoidPatterns[i]->isActive() << std::endl;
+		}
 		logged = true;
 	}
 
@@ -1324,10 +1461,19 @@ void GraphicsRenderer::drawBoids() {
 	vec3 boidOffset = boidDimensions * 0.5f;
 
 	// Iterate through each boid pattern
+	int activePatternCount = 0;
+	int spheresAdded = 0;
 	for (const auto& pattern : mBoidPatterns) {
 		if (!pattern->isActive()) continue;
+		activePatternCount++;
 
 		int patternId = pattern->getId();
+
+		static bool loggedPatternMode = false;
+		if (!loggedPatternMode) {
+			console() << "Pattern " << patternId << " (" << pattern->getName() << ") is active" << std::endl;
+			loggedPatternMode = true;
+		}
 
 		// Iterate through all boids
 		for (int i = 0; i < boids->numBoids(); i++) {
@@ -1339,11 +1485,21 @@ void GraphicsRenderer::drawBoids() {
 			// Center boid position around origin
 			vec3 centeredPos = boid->pos - boidOffset;
 
+			static bool loggedMode = false;
+			if (!loggedMode && i == 0) {
+				console() << "Pattern " << patternId << " mode: " << (int)config.mode
+				          << " (0=ENVMAP, 1=TRAILS, 2=CONNECTIONS, 3=SPLINES)" << std::endl;
+				loggedMode = true;
+			}
+
 			// Render based on mode
 			switch (config.mode) {
-				case BoidRenderMode::SPHERES: {
-					// Simple sphere at boid position
-					addSphereInstance(centeredPos, config.color, config.size, -1);
+				case BoidRenderMode::ENVMAP: {
+					// Environment mapped sphere - mark for env map rendering
+					// Pattern ID 5 and 13 are used to trigger env map shader in drawSphereInstances
+					int envMapPatternId = config.useEnvMap ? 5 : -1;
+					addSphereInstance(centeredPos, config.color, config.size, envMapPatternId);
+					spheresAdded++;
 					break;
 				}
 
@@ -1352,26 +1508,39 @@ void GraphicsRenderer::drawBoids() {
 					addSphereInstance(centeredPos, config.color, config.size, -1);
 
 					// Trail particles along velocity vector (backwards)
-					vec3 velocityDir = glm::normalize(boid->vec);
-					for (int t = 1; t <= config.trailLength; t++) {
-						float trailFactor = (float)t / (float)config.trailLength;
-						vec3 trailPos = centeredPos - velocityDir * trailFactor * 3.0f;
+					// Check if velocity is non-zero before normalizing to prevent crash
+					float velMag = glm::length(boid->vec);
+					if (velMag > 0.001f) {
+						vec3 velocityDir = glm::normalize(boid->vec);
+						for (int t = 1; t <= config.trailLength; t++) {
+							float trailFactor = (float)t / (float)config.trailLength;
+							vec3 trailPos = centeredPos - velocityDir * trailFactor * 3.0f;
 
-						// Fade trail particles
-						ColorA trailColor = config.color;
-						trailColor.a *= (1.0f - trailFactor * 0.8f);
+							// Fade trail particles
+							ColorA trailColor = config.color;
+							trailColor.a *= (1.0f - trailFactor * 0.8f);
 
-						// Shrink trail particles
-						float trailSize = config.size * (1.0f - trailFactor * 0.6f);
+							// Shrink trail particles
+							float trailSize = config.size * (1.0f - trailFactor * 0.6f);
 
-						addSphereInstance(trailPos, trailColor, trailSize, -1);
+							addSphereInstance(trailPos, trailColor, trailSize, -1);
+						}
 					}
 					break;
 				}
 
 				case BoidRenderMode::CONNECTIONS: {
 					// Draw boid as small sphere
-					addSphereInstance(centeredPos, config.color, config.size, -1);
+					static bool loggedConnection = false;
+					if (!loggedConnection && i == 0) {
+						console() << "CONNECTIONS: size=" << config.size << " color="
+						          << config.color.r << "," << config.color.g << "," << config.color.b << "," << config.color.a
+						          << " radius=" << config.connectionRadius << std::endl;
+						loggedConnection = true;
+					}
+					// Use pattern ID 13 for fxp_* cubemap, 5 for fxic_* cubemap
+					int envMapPatternId = config.useEnvMap ? (config.useEnvMapPattern13 ? 13 : 5) : -1;
+					addSphereInstance(centeredPos, config.color, config.size, envMapPatternId);
 
 					// Draw lines to nearby boids
 					for (int j = i + 1; j < boids->numBoids(); j++) {
@@ -1381,7 +1550,11 @@ void GraphicsRenderer::drawBoids() {
 						if (dist < config.connectionRadius) {
 							// Calculate line color based on distance (closer = brighter)
 							float distFactor = 1.0f - (dist / config.connectionRadius);
+							// Use same color as nodes, modulated by distance
 							ColorA lineColor = config.color;
+							lineColor.r *= distFactor;
+							lineColor.g *= distFactor;
+							lineColor.b *= distFactor;
 							lineColor.a *= distFactor;
 
 							vec3 otherCenteredPos = otherBoid->pos - boidOffset;
@@ -1391,12 +1564,91 @@ void GraphicsRenderer::drawBoids() {
 					break;
 				}
 
+				case BoidRenderMode::SPLINES: {
+					// Spline rendering is handled below after collecting all boid positions
+					break;
+				}
+
 				case BoidRenderMode::CUSTOM: {
 					// Custom rendering can be added here for future patterns
 					break;
 				}
 			}
 		}
+	}
+
+	// Handle SPLINES mode - draw B-spline curves through all boid positions
+	for (const auto& pattern : mBoidPatterns) {
+		if (!pattern->isActive()) continue;
+
+		// Check if this is a splines pattern (pattern ID 3)
+		if (pattern->getId() == 3 && boids->numBoids() >= 4) {
+			// Collect all boid positions
+			vector<vec3> points;
+			for (int i = 0; i < boids->numBoids(); i++) {
+				Boid* boid = boids->getBoidAtIndex(i);
+				points.push_back(boid->pos - boidOffset);
+			}
+
+			// Get color from pattern
+			BoidRenderConfig config = pattern->getRenderConfig(boids->getBoidAtIndex(0), 0, boids, this);
+
+			// Create 3 B-splines with different degrees (like old lambda app)
+			BSpline3f splineX(points, 3, true, false);   // Degree 3, closed loop
+			BSpline3f splineY(points, 5, true, false);   // Degree 5, closed loop
+			BSpline3f splineZ(points, 7, true, false);   // Degree 7, closed loop (was 11, reduced for stability)
+
+			// Sample splines and create line segments
+			const int numSamples = 200;
+			const float step = 1.0f / numSamples;
+
+			// Spline X - thin lines
+			for (int t = 0; t < numSamples; t++) {
+				float t0 = t * step;
+				float t1 = (t + 1) * step;
+				vec3 p0 = splineX.getPosition(t0);
+				vec3 p1 = splineX.getPosition(t1);
+				addLineInstance(p0, p1, config.color, 1.0f);
+			}
+
+			// Spline Y - medium lines (brighter)
+			ColorA colorY = config.color;
+			colorY.r = glm::min(colorY.r * 1.2f, 1.0f);
+			colorY.g = glm::min(colorY.g * 1.2f, 1.0f);
+			colorY.b = glm::min(colorY.b * 1.2f, 1.0f);
+			for (int t = 0; t < numSamples; t++) {
+				float t0 = t * step;
+				float t1 = (t + 1) * step;
+				vec3 p0 = splineY.getPosition(t0);
+				vec3 p1 = splineY.getPosition(t1);
+				addLineInstance(p0, p1, colorY, 3.0f);
+			}
+
+			// Spline Z - thick lines (brightest)
+			ColorA colorZ = config.color;
+			colorZ.r = glm::min(colorZ.r * 1.5f, 1.0f);
+			colorZ.g = glm::min(colorZ.g * 1.5f, 1.0f);
+			colorZ.b = glm::min(colorZ.b * 1.5f, 1.0f);
+			for (int t = 0; t < numSamples; t++) {
+				float t0 = t * step;
+				float t1 = (t + 1) * step;
+				vec3 p0 = splineZ.getPosition(t0);
+				vec3 p1 = splineZ.getPosition(t1);
+				addLineInstance(p0, p1, colorZ, 5.0f);
+			}
+		}
+	}
+
+	static bool loggedRender = false;
+	if (!loggedRender && activePatternCount > 0) {
+		console() << "Active patterns: " << activePatternCount << ", spheres added: " << spheresAdded << std::endl;
+		console() << "Total sphere instances: " << mSpherePositions.size() << std::endl;
+		if (spheresAdded > 0) {
+			console() << "First sphere: pos=" << mSpherePositions[0].x << "," << mSpherePositions[0].y << "," << mSpherePositions[0].z
+			          << " color=" << mSphereColors[0].r << "," << mSphereColors[0].g << "," << mSphereColors[0].b << "," << mSphereColors[0].a
+			          << " radius=" << mSphereRadii[0] << std::endl;
+		}
+		loggedRender = true;
 	}
 }
 
@@ -1424,8 +1676,8 @@ void GraphicsRenderer::drawFragment(Cell* cell) {
 		// Compute final position
 		vec3 position;
 		position.x = (float)x * fragSizeX + (fragSizeX * 0.5f) - hx;
-		position.y = (float)y * fragSizeY + (fragSizeY * 0.5f) - hx;
-		position.z = (float)z * fragSizeZ + (fragSizeZ * 0.5f) - hx;
+		position.y = (float)y * fragSizeY + (fragSizeY * 0.5f) - hy;
+		position.z = (float)z * fragSizeZ + (fragSizeZ * 0.5f) - hz;
 
 		position += config.offset;
 
@@ -1444,7 +1696,7 @@ void GraphicsRenderer::drawFragment(Cell* cell) {
 					float yOffset = config.customFloats.at("yOffset");      // 0.25
 
 					// Recalculate Y position: yB = y * (fragSizeX * 0.5) + (fragSizeX * 0.25)
-					position.y = (float)y * fragSizeY * yCompress + fragSizeY * yOffset - hx;
+					position.y = (float)y * fragSizeY * yCompress + fragSizeY * yOffset - hy;
 				}
 				addCubeInstance(position, config.color, finalScale, config.texture);
 				break;
@@ -1757,8 +2009,8 @@ void GraphicsRenderer::drawFragment(Cell* cell) {
 
 							vec3 neighborPos;
 							neighborPos.x = (float)neighbor->x * fragSizeX + (fragSizeX * 0.5f) - hx;
-							neighborPos.y = (float)neighbor->y * fragSizeY + (fragSizeY * 0.5f) - hx;
-							neighborPos.z = (float)neighbor->z * fragSizeZ + (fragSizeZ * 0.5f) - hx;
+							neighborPos.y = (float)neighbor->y * fragSizeY + (fragSizeY * 0.5f) - hy;
+							neighborPos.z = (float)neighbor->z * fragSizeZ + (fragSizeZ * 0.5f) - hz;
 
 							neighborPos += vec3(
 								fragSizeX * sin(neighborAngle),

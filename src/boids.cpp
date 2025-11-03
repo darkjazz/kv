@@ -54,15 +54,23 @@ Boids::Boids(int numboids, vec3 dimensions, double speed, double cohesion, doubl
 	this->alignment = alignment;
 	this->separation = separation;
 	this->center = center;
-	
+
+	// Initialize audio reactivity
+	baseCohesion = cohesion;
+	baseSeparation = separation;
+	baseAlignment = alignment;
+	audioReactivityCohesion = 0.0f;
+	audioReactivitySeparation = 0.0f;
+	audioReactivityAlignment = 0.0f;
+
 	_ctype = ABS;
-	
+
 	maxNumBoids = 100;
 	_minLifeExpectancy = 100;
 	_maxLifeExpectancy = 1000;
-	
+
 	init();
-	
+
 }
 
 Boids::~Boids() { _boids.clear(); }

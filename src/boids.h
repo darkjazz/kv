@@ -66,13 +66,19 @@ public:
 	void setAutoCenter();
 	void setNoCenter();
 	Boid* getBoidAtIndex(int index) { return &_boids[index]; };
-	int numBoids() { return _boids.size(); }
+	int numBoids() const { return _boids.size(); }
 	void addBoid(vec3);
 	void removeBoid(int);
-    vec3 dimensions() { return _dim; }
+    vec3 dimensions() const { return _dim; }
 	vec3 centroid();
 	double speed, cohesion, alignment, separation, center;
-	
+
+	// Audio reactivity
+	double baseCohesion, baseSeparation, baseAlignment;  // Base values without audio
+	float audioReactivityCohesion;    // Audio modulation amount for cohesion (0.0-1.0)
+	float audioReactivitySeparation;  // Audio modulation amount for separation (0.0-1.0)
+	float audioReactivityAlignment;   // Audio modulation amount for alignment (0.0-1.0)
+
 	int maxNumBoids;
 
 private:

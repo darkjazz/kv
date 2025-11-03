@@ -37,15 +37,16 @@ class GraphicsRenderer;
 
 // Boid rendering modes
 enum class BoidRenderMode {
-    SPHERES,      // Simple spheres at boid positions
+    ENVMAP,       // Environment mapped spheres using cubemap
     TRAILS,       // Spheres with trailing particles based on velocity
     CONNECTIONS,  // Lines connecting nearby boids
+    SPLINES,      // B-spline curves through boid positions
     CUSTOM        // Custom rendering in drawBoids
 };
 
 // Configuration for boid rendering
 struct BoidRenderConfig {
-    BoidRenderMode mode = BoidRenderMode::SPHERES;
+    BoidRenderMode mode = BoidRenderMode::ENVMAP;
     ColorA color = ColorA(1.0f, 1.0f, 1.0f, 1.0f);
     float size = 1.0f;
     float lineWidth = 1.0f;
@@ -53,6 +54,8 @@ struct BoidRenderConfig {
     float connectionRadius = 5.0f;     // For CONNECTIONS mode
     bool useVelocityColor = false;    // Color based on velocity
     bool useDepthFade = false;        // Fade alpha based on distance from camera
+    bool useEnvMap = false;           // Use environment map shader
+    bool useEnvMapPattern13 = false;  // Use fxp_* cubemap (true) vs fxic_* (false)
 };
 
 // Base class for boid rendering patterns

@@ -37,6 +37,7 @@
 #include "world.h"
 #include "pattern.h"
 #include "boidpattern.h"
+#include "codepanel.h"
 
 #include <vector>
 #include <memory>
@@ -46,7 +47,7 @@ using namespace ci::app;
 using namespace std;
 
 const int numPatterns = 23;
-const int numBoidPatterns = 3;
+const int numBoidPatterns = 4;
 
 // Legacy struct for boid patterns (kept for compatibility)
 struct boidPattern {
@@ -70,11 +71,14 @@ public:
 			mBoidPatterns.push_back(BoidPatternFactory::create(i));
 		}
         boidPatternLib = new boidPattern[numBoidPatterns];
+		boids = nullptr;
 		rotateXYZ = vec3( 1.0f, 0.0f, 0.0f);
 		rotateAngle = 0.0f;
 		ptrWorld = world;
 		attachEyeToFirstBoid = false;
 		lookAtCentroid = false;
+		codePanelActive = false;
+		codePanelMapped = false;
 		counter = 0;
 		maxphase = 28;
 		ptrBMU = NULL;
@@ -173,6 +177,14 @@ public:
 
     Boids* boids;
 
+	// Code panel for live coding
+	CodePanel codePanel;
+	bool codePanelActive;
+	bool codePanelMapped;
+
+	void drawCodePanel();
+	void mapCodePanel();
+
     vec3 mLightLoc;
 	bool bLIGHT;
     int counter;
@@ -194,7 +206,7 @@ private:
 	Cell* ptrBMU;
 	World* ptrWorld;
 	float _bgr, _bgg, _bgb;
-	float hx, hy;
+	float hx, hy, hz;
 	float blocx, blocy, blocz;
 	float mLastTime = 0.0f;
 
