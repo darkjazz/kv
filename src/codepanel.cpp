@@ -37,6 +37,9 @@ CodePanel::CodePanel()
 	maxLines = 67;
 	counter = 0;
 	title = "sc.code";
+	codeColor = Color(0.8f, 0.8f, 0.8f);  // Default light gray
+	codeFontName = "Courier";
+	codeFontSize = 11;
 }
 
 void CodePanel::createTexture()
@@ -52,8 +55,8 @@ void CodePanel::createTexture()
 	}
 
 	// Add code lines
-	layout.setFont(Font("Courier", 11));
-	layout.setColor(Color(0.8f, 0.8f, 0.8f));
+	layout.setFont(Font(codeFontName, codeFontSize));
+	layout.setColor(codeColor);
 
 	for (int i = lines.size() - 1; i >= 0; i--) {
 		layout.addLine(lines[i]);
@@ -147,4 +150,13 @@ void CodePanel::putLine(int index, string line) {
 
 void CodePanel::makeHeader() {
 	// Reserved for future use
+}
+
+void CodePanel::setCodeColor(float r, float g, float b) {
+	codeColor = Color(r, g, b);
+}
+
+void CodePanel::setCodeFont(string fontName, int fontSize) {
+	codeFontName = fontName;
+	codeFontSize = fontSize;
 }

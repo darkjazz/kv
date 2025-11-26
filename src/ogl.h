@@ -39,6 +39,17 @@
 #include "boidpattern.h"
 #include "codepanel.h"
 
+// Audio includes (forward declarations to avoid QuickDraw Pattern conflict)
+namespace cinder { namespace audio {
+	class Context;
+	class InputDeviceNode;
+	class MonitorSpectralNode;
+	class Device;
+	typedef std::shared_ptr<Device> DeviceRef;
+	typedef std::shared_ptr<InputDeviceNode> InputDeviceNodeRef;
+	typedef std::shared_ptr<MonitorSpectralNode> MonitorSpectralNodeRef;
+}}
+
 #include <vector>
 #include <memory>
 
@@ -46,7 +57,7 @@ using namespace ci;
 using namespace ci::app;
 using namespace std;
 
-const int numPatterns = 23;
+const int numPatterns = 24;
 const int numBoidPatterns = 4;
 
 // Legacy struct for boid patterns (kept for compatibility)
@@ -91,6 +102,8 @@ public:
 		mAudioLowBand = 0.0f;
 		mAudioMidBand = 0.0f;
 		mAudioHighBand = 0.0f;
+		mAudioInputEnabled = false;
+		mUseOutputDevice = false;
 	};
 	
 	~GraphicsRenderer() {
@@ -189,13 +202,25 @@ public:
 	bool bLIGHT;
     int counter;
 
-	// Audio reactivity from SOM vector
-	float mAudioAmplitude;    // Overall energy (sum of MFCC coefficients)
-	float mAudioLowBand;      // Low frequency band (MFCC 0-4)
-	float mAudioMidBand;      // Mid frequency band (MFCC 5-9)
-	float mAudioHighBand;     // High frequency band (MFCC 10+)
+	// Audio reactivity from SOM vector OR real audio input
+	float mAudioAmplitude;    // Overall energy (sum of MFCC coefficients OR FFT amplitude)
+	float mAudioLowBand;      // Low frequency band (MFCC 0-4 OR FFT 0-200Hz)
+	float mAudioMidBand;      // Mid frequency band (MFCC 5-9 OR FFT 200-2000Hz)
+	float mAudioHighBand;     // High frequency band (MFCC 10+ OR FFT 2000Hz+)
 
 	void updateAudioFeatures();  // Extract features from SOM vector
+	void updateAudioFromInput(); // Extract features from real audio input
+	void setupAudioInput(bool useOutput = false);  // Initialize audio input (or output loopback)
+	void enableAudioInput(bool enable);  // Enable/disable real audio input
+	bool isAudioInputEnabled() const { return mAudioInputEnabled; }
+	void setupAudioFromDevice(const std::string& deviceName);  // Setup from specific device name
+
+	// Real audio input system
+	bool mAudioInputEnabled;
+	bool mUseOutputDevice;
+	audio::InputDeviceNodeRef mAudioInput;
+	audio::MonitorSpectralNodeRef mMonitorSpectralNode;
+	std::vector<float> mMagSpectrum;
 
 private:
 
@@ -209,6 +234,11 @@ private:
 	float hx, hy, hz;
 	float blocx, blocy, blocz;
 	float mLastTime = 0.0f;
+
+	// FPS monitoring
+	float mFpsLastTime = 0.0f;
+	int mFrameCount = 0;
+	float mCurrentFps = 0.0f;
 
     gl::VertBatchRef    mGrid;
 

@@ -246,19 +246,21 @@ void World::initRule(R r) {
 }
 
 void::World::prepareNext() {
-	
+
 	if (_interpPhase == _interpCount) {
 		incrementIndex();
 		_updateStates = true;
+		// Reset alive counter at start of new generation
+		_alive = 0;
 	}
 	else {
 		_interpPhase++;
 	}
-	
+
 	if (_inputVectorUpdated) {
 		_bestMatch = 10.0;
 	}
-		
+
 	_currentQueryIndex = 0;
 	
 	if (somActivated) {

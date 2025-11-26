@@ -232,6 +232,36 @@ void OSCMessenger::setUpListener() {
             pattern->setAudioReactivity(msg.getArgFloat(1));
         }
     });
+
+    // Audio input enable/disable
+    _listener.setListener( "/lambda/audio/input/enable",
+    [&]( const osc::Message &msg ){
+        bool enable = msg.getArgInt32(0) == 1;
+        _ogl->enableAudioInput(enable);
+        console() << "Audio input " << (enable ? "enabled" : "disabled") << " via OSC" << std::endl;
+    });
+
+    // Audio output capture (requires loopback driver)
+    _listener.setListener( "/lambda/audio/output/enable",
+    [&]( const osc::Message &msg ){
+        bool enable = msg.getArgInt32(0) == 1;
+        if (enable) {
+            _ogl->setupAudioInput(true);  // true = use output device
+            _ogl->enableAudioInput(true);
+        } else {
+            _ogl->enableAudioInput(false);
+        }
+        console() << "Audio output capture " << (enable ? "enabled" : "disabled") << " via OSC" << std::endl;
+    });
+
+    // Select specific audio device by name
+    _listener.setListener( "/lambda/audio/device",
+    [&]( const osc::Message &msg ){
+        std::string deviceName = msg.getArgString(0);
+        _ogl->setupAudioFromDevice(deviceName);
+        console() << "Setting audio device to: " << deviceName << std::endl;
+    });
+
     // Boid pattern system - matches old lambda app format
     _listener.setListener( "/lambda/graphics/boidpattern",
     [&]( const osc::Message &msg ){
@@ -352,6 +382,14 @@ void OSCMessenger::setUpListener() {
     _listener.setListener( "/lambda/livecode/fadeTime",
     [&]( const osc::Message &msg ){
         _ogl->codePanel.fadeTime = msg.getArgInt32(0);
+    });
+    _listener.setListener( "/lambda/livecode/codecolour",
+    [&]( const osc::Message &msg ){
+        _ogl->codePanel.setCodeColor(msg.getArgFloat(0), msg.getArgFloat(1), msg.getArgFloat(2));
+    });
+    _listener.setListener( "/lambda/livecode/codefont",
+    [&]( const osc::Message &msg ){
+        _ogl->codePanel.setCodeFont(msg.getArgString(0), msg.getArgInt32(1));
     });
     _listener.setListener( "/lambda/framerate",
     [&]( const osc::Message &msg ){

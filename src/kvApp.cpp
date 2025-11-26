@@ -39,8 +39,8 @@ void kvApp::setup()
     int _winSizeX = 1024;
     int _winSizeY = 768;
     int _frameRate = 30;
-    int _windowMode = 0;
-    int _fullScreen = 0;
+    int _windowMode = 1;  // Default to mode 1 (external display/projector)
+    int _fullScreen = 1;  // Default to fullscreen
 
     auto args = getCommandLineArgs();
     for (size_t i = 0; i < args.size(); ++i) {
@@ -58,27 +58,33 @@ void kvApp::setup()
     }
 
     auto displays = Display::getDisplays();
-    
+
     // Check if a secondary display is available
     DisplayRef targetDisplay;
-    if (displays.size() > 1) {
-        targetDisplay = displays[1]; // Select the second display
+    if (_windowMode == 1 && displays.size() > 1) {
+        targetDisplay = displays[1]; // mode 1 = Select the second display (projector)
     } else {
-        targetDisplay = Display::getMainDisplay(); // Fallback to main display
+        targetDisplay = Display::getMainDisplay(); // mode 0 = main display
     }
-    
+
     auto targetSize = targetDisplay->getSize();
 
+    // Move window to target display BEFORE going fullscreen
+    if (_windowMode == 1 && displays.size() > 1) {
+        // Position on secondary display
+        getWindow()->setPos(targetDisplay->getBounds().x1, targetDisplay->getBounds().y1);
+    } else {
+        // Position on main display
+        getWindow()->setPos(targetDisplay->getBounds().x1, targetDisplay->getBounds().y1);
+    }
+
+    setWindowSize(_winSizeX, _winSizeY);
+
     if (_fullScreen > 0) {
-        setFullScreen(_fullScreen);
+        setFullScreen(_fullScreen, FullScreenOptions().display(targetDisplay));
         _winSizeX = targetSize.x;
         _winSizeY = targetSize.y;
     }
-    if (_windowMode == 0)
-        getWindow()->setPos(targetDisplay->getBounds().x1, targetDisplay->getBounds().y1);
-    else
-        getWindow()->setPos(targetDisplay->getBounds().x2 - _winSizeX, targetDisplay->getBounds().y2 - _winSizeY);
-    setWindowSize(_winSizeX, _winSizeY);
     
     setFrameRate(_frameRate);
 
@@ -115,18 +121,23 @@ void kvApp::draw()
     ogl->startDraw();
         
     if (world->initialized()) {
-        
+
         int x, y, z;
         world->prepareNext();
-        
+
         for (x = 0; x < world->sizeX(); x++) {
             for (y = 0; y < world->sizeY(); y++) {
                 for (z = 0; z < world->sizeZ(); z++) {
-                    
+
                     if (world->ruleInitialized)
                         world->next(x, y, z);
                     if (world->somActivated)
                         world->nextSOM(x, y, z);
+
+                    // Count alive cells for accurate stats
+                    if (world->cells[x][y][z].states[world->index()] > 0.0) {
+                        world->incrementAlive();
+                    }
 
                     ogl->drawFragment(&world->cells[x][y][z]);
                 }

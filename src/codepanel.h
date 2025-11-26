@@ -41,6 +41,8 @@ public:
     void putLine(int index, string line);
 	void bind();
 	void unbind();
+	void setCodeColor(float r, float g, float b);
+	void setCodeFont(string fontName, int fontSize);
 
 	vec2 loc;
 
@@ -52,6 +54,9 @@ public:
 	vector<string> lines;
 
 	string title;
+	Color codeColor;
+	string codeFontName;
+	int codeFontSize;
 
 private:
 	void makeHeader();

@@ -31,47 +31,76 @@ float Pattern::getAudioBand(const GraphicsRenderer* renderer, int band) const {
 }
 
 // ============================================================================
-// Pattern00: Wireframe boundary lines
+// Pattern00: Nested boundary rectangles
 // ============================================================================
 class Pattern00 : public Pattern {
+private:
+    float mBrightness = 2.5f;  // Overall brightness multiplier
+
 public:
     Pattern00() : Pattern(0) {}
 
-    string getName() const override { return "Wireframe Boundaries"; }
-    string getDescription() const override { return "Draws wireframe lines on world boundaries"; }
+    string getName() const override { return "Nested Boundary Rectangles"; }
+    string getDescription() const override { return "Draws nested rectangles on boundaries with inverse alpha scaling"; }
 
     bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
         if (!mActive) return false;
+        if (cell->phase <= 0.0f) return false;
 
         World* w = const_cast<World*>(world);
-        float cstate = getCellState(cell, world);
-        if (w->ruleType() != CONT && cstate == 0.0f) return false;
 
-        // Only draw on boundaries
+        // Only render on boundaries (same as Pattern10)
         return (x == 0 || y == 0 || z == 0 ||
-                x == w->sizeX() - 1 || y == w->sizeY() - 1 || z == w->sizeZ() - 1);
+                (x == w->sizeX() - 1 && y < w->sizeY() - 1 && z < w->sizeZ() - 1) ||
+                (y == w->sizeY() - 1 && z < w->sizeZ() - 1 && x < w->sizeX() - 1) ||
+                (z == w->sizeZ() - 1 && x < w->sizeX() - 1 && y < w->sizeY() - 1));
     }
 
     RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
                                  GraphicsRenderer* renderer) const override {
         RenderConfig config;
-        config.mode = RenderMode::LINES;
+        config.mode = RenderMode::PLANES;
 
         World* w = const_cast<World*>(world);
         float cstate = getCellState(cell, world);
-        config.color = applyMapping(cstate);
+        float unmap = 1.0f - cstate;
 
-        // Subtle audio reactivity: modulate line width with low frequency band
-        float audioMod = 1.0f + (getAudioBand(renderer, 0) * 0.5f);  // 0-50% boost from bass
-        config.lineWidth = 1.0f * audioMod;
-        config.lineSmooth = true;
-        config.uniformScale = cstate * 2.0f;
+        // Determine which boundaries we're on
+        bool onXNeg = (x == 0);
+        bool onYNeg = (y == 0);
+        bool onZNeg = (z == 0);
+        bool onXPos = (x == w->sizeX() - 1 && y < w->sizeY() - 1 && z < w->sizeZ() - 1);
+        bool onYPos = (y == w->sizeY() - 1 && z < w->sizeZ() - 1 && x < w->sizeX() - 1);
+        bool onZPos = (z == w->sizeZ() - 1 && x < w->sizeX() - 1 && y < w->sizeY() - 1);
 
-        // Compute grid position and size (from renderer's fragSize)
-        // This will be used by drawFragment to create line segments
-        // The actual line endpoints will be computed in drawFragment based on which boundary
+        // Store rendering info for custom nested rectangles
+        // Will draw 4 rects at sizes: 0.25, 0.5, 0.75, 1.0
+        // with alpha = 1/size (so larger rects have smaller alpha)
+        config.customFloats["unmap"] = unmap;
+        config.customFloats["drawNested"] = 1.0f;  // Flag to draw nested rects
+
+        config.customFloats["onXNeg"] = onXNeg ? 1.0f : 0.0f;
+        config.customFloats["onYNeg"] = onYNeg ? 1.0f : 0.0f;
+        config.customFloats["onZNeg"] = onZNeg ? 1.0f : 0.0f;
+        config.customFloats["onXPos"] = onXPos ? 1.0f : 0.0f;
+        config.customFloats["onYPos"] = onYPos ? 1.0f : 0.0f;
+        config.customFloats["onZPos"] = onZPos ? 1.0f : 0.0f;
+
+        // Base color with brightness affecting alpha only (to keep colors pure)
+        ColorA baseColor = applyMapping(unmap);
+
+        // Apply overall brightness and audio reactivity to ALPHA only
+        float audioMod = 1.0f + (getAudioAmplitude(renderer) * 0.2f);  // 0-20% boost
+        float totalBrightness = mBrightness * audioMod;
+
+        baseColor.a = std::min(baseColor.a * totalBrightness, 1.0f);
+        config.color = baseColor;
 
         return config;
+    }
+
+    void update(float time, float dt) override {
+        mTime = time;
     }
 };
 
@@ -245,14 +274,20 @@ public:
     Pattern04() : Pattern(4) {}
 
     string getName() const override { return "Textured Cubes"; }
-    string getDescription() const override { return "Draws texture-mapped cubes throughout the world"; }
+    string getDescription() const override { return "Draws texture-mapped cubes on world boundaries"; }
 
     bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
         if (!mActive) return false;
 
         World* w = const_cast<World*>(world);
         float cstate = getCellState(cell, world);
-        return (w->ruleType() == CONT || cstate != 0.0f);
+        if (w->ruleType() != CONT && cstate == 0.0f) return false;
+
+        // Only render on boundaries to reduce texture overhead
+        return (x == 0 || y == 0 || z == 0 ||
+                (x == w->sizeX() - 1 && y < w->sizeY() - 1 && z < w->sizeZ() - 1) ||
+                (y == w->sizeY() - 1 && z < w->sizeZ() - 1 && x < w->sizeX() - 1) ||
+                (z == w->sizeZ() - 1 && x < w->sizeX() - 1 && y < w->sizeY() - 1));
     }
 
     RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
@@ -331,14 +366,20 @@ public:
     Pattern05() : Pattern(5) {}
 
     string getName() const override { return "Reflective Spheres"; }
-    string getDescription() const override { return "Environment-mapped spheres with cubemap reflections"; }
+    string getDescription() const override { return "Environment-mapped spheres on boundaries with cubemap reflections"; }
 
     bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
         if (!mActive) return false;
 
         World* w = const_cast<World*>(world);
         float cstate = getCellState(cell, world);
-        return (w->ruleType() == CONT || cstate != 0.0f);
+        if (w->ruleType() != CONT && cstate == 0.0f) return false;
+
+        // Only render on boundaries to reduce cubemap overhead
+        return (x == 0 || y == 0 || z == 0 ||
+                (x == w->sizeX() - 1 && y < w->sizeY() - 1 && z < w->sizeZ() - 1) ||
+                (y == w->sizeY() - 1 && z < w->sizeZ() - 1 && x < w->sizeX() - 1) ||
+                (z == w->sizeZ() - 1 && x < w->sizeX() - 1 && y < w->sizeY() - 1));
     }
 
     RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
@@ -579,8 +620,11 @@ public:
         config.customFloats["onZPlane"] = onZPlane ? 1.0f : 0.0f;
         config.customFloats["cellPhase"] = cell->phase;
 
-        // Base color with subtle audio reactivity on alpha
+        // Base color - no RGB multiplication to preserve color accuracy
         ColorA baseColor = applyMapping(unmap);
+
+        // Boost alpha for brightness without shifting color
+        baseColor.a = std::min(1.0f, baseColor.a * 1.8f);
 
         // Subtle audio reactivity: mid frequencies modulate alpha/brightness
         float audioMod = 1.0f + (getAudioBand(renderer, 1) * 0.3f);  // 0-30% boost from mids
@@ -871,7 +915,7 @@ public:
     Pattern13() : Pattern(13) {}
 
     string getName() const override { return "Network Spheres"; }
-    string getDescription() const override { return "Cube-mapped spheres with thin cylinders connecting neighbors in network style"; }
+    string getDescription() const override { return "Cube-mapped spheres with cylinder connections on 4-grid pattern"; }
 
     bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
         if (!mActive) return false;
@@ -946,23 +990,19 @@ public:
     Pattern14() : Pattern(14) {}
 
     string getName() const override { return "Circular Motion Cubes"; }
-    string getDescription() const override { return "Textured cubes with circular motion using 04.png"; }
+    string getDescription() const override { return "Textured cubes on boundaries with circular motion using 04.png"; }
 
     bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
         if (!mActive) return false;
+        if (cell->phase <= 0.0f) return false;
 
         World* w = const_cast<World*>(world);
 
-        // Filter: inside boundaries, state > 0, and on 4-grid
-        if (x <= 0 || y <= 0 || z <= 0 ||
-            x >= w->sizeX() - 1 || y >= w->sizeY() - 1 || z >= w->sizeZ() - 1) {
-            return false;
-        }
-
-        if (cell->phase <= 0.0f) return false;
-
-        // Only render on every 4th coordinate (same as Pattern13)
-        return (x % 4 == 0 || y % 4 == 0 || z % 4 == 0);
+        // Only render on boundaries to reduce texture overhead
+        return (x == 0 || y == 0 || z == 0 ||
+                (x == w->sizeX() - 1 && y < w->sizeY() - 1 && z < w->sizeZ() - 1) ||
+                (y == w->sizeY() - 1 && z < w->sizeZ() - 1 && x < w->sizeX() - 1) ||
+                (z == w->sizeZ() - 1 && x < w->sizeX() - 1 && y < w->sizeY() - 1));
     }
 
     RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
@@ -1473,14 +1513,19 @@ public:
     Pattern22() : Pattern(22) {}
 
     string getName() const override { return "Grid Textured Cubes"; }
-    string getDescription() const override { return "Textured cubes on 4-grid with inverse state sizing using 08.png"; }
+    string getDescription() const override { return "Textured cubes on boundaries with inverse state sizing using 08.png"; }
 
     bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
         if (!mActive) return false;
-
-        // From pattern15: (x % 4 == 0 || y % 4 == 0 || z % 4 == 0) && state > 0.0
         if (cell->phase <= 0.0f) return false;
-        return (x % 4 == 0 || y % 4 == 0 || z % 4 == 0);
+
+        World* w = const_cast<World*>(world);
+
+        // Only render on boundaries to reduce texture overhead
+        return (x == 0 || y == 0 || z == 0 ||
+                (x == w->sizeX() - 1 && y < w->sizeY() - 1 && z < w->sizeZ() - 1) ||
+                (y == w->sizeY() - 1 && z < w->sizeZ() - 1 && x < w->sizeX() - 1) ||
+                (z == w->sizeZ() - 1 && x < w->sizeX() - 1 && y < w->sizeY() - 1));
     }
 
     RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
@@ -1547,6 +1592,78 @@ public:
 };
 
 // ============================================================================
+// Pattern23: Hexagonal boundary cells (like Pattern00 but hexagons)
+// ============================================================================
+class Pattern23 : public Pattern {
+private:
+    float mBrightness = 2.5f;  // Overall brightness multiplier
+
+public:
+    Pattern23() : Pattern(23) {}
+
+    string getName() const override { return "Hexagonal Boundary Cells"; }
+    string getDescription() const override { return "Draws hexagonal cells on boundaries with nested scaling"; }
+
+    bool isActive(int x, int y, int z, const Cell* cell, const World* world) const override {
+        if (!mActive) return false;
+        if (cell->phase <= 0.0f) return false;
+
+        World* w = const_cast<World*>(world);
+
+        // Only render on boundaries (same as Pattern00)
+        return (x == 0 || y == 0 || z == 0 ||
+                (x == w->sizeX() - 1 && y < w->sizeY() - 1 && z < w->sizeZ() - 1) ||
+                (y == w->sizeY() - 1 && z < w->sizeZ() - 1 && x < w->sizeX() - 1) ||
+                (z == w->sizeZ() - 1 && x < w->sizeX() - 1 && y < w->sizeY() - 1));
+    }
+
+    RenderConfig getRenderConfig(int x, int y, int z, const Cell* cell, const World* world,
+                                 GraphicsRenderer* renderer) const override {
+        RenderConfig config;
+        config.mode = RenderMode::CUSTOM;  // Custom rendering for hexagons
+
+        World* w = const_cast<World*>(world);
+        float cstate = getCellState(cell, world);
+        float unmap = 1.0f - cstate;
+
+        // Determine which boundaries we're on
+        bool onXNeg = (x == 0);
+        bool onYNeg = (y == 0);
+        bool onZNeg = (z == 0);
+        bool onXPos = (x == w->sizeX() - 1 && y < w->sizeY() - 1 && z < w->sizeZ() - 1);
+        bool onYPos = (y == w->sizeY() - 1 && z < w->sizeZ() - 1 && x < w->sizeX() - 1);
+        bool onZPos = (z == w->sizeZ() - 1 && x < w->sizeX() - 1 && y < w->sizeY() - 1);
+
+        // Store rendering info for custom hexagonal cells
+        config.customFloats["unmap"] = unmap;
+        config.customFloats["drawHexagons"] = 1.0f;
+
+        config.customFloats["onXNeg"] = onXNeg ? 1.0f : 0.0f;
+        config.customFloats["onYNeg"] = onYNeg ? 1.0f : 0.0f;
+        config.customFloats["onZNeg"] = onZNeg ? 1.0f : 0.0f;
+        config.customFloats["onXPos"] = onXPos ? 1.0f : 0.0f;
+        config.customFloats["onYPos"] = onYPos ? 1.0f : 0.0f;
+        config.customFloats["onZPos"] = onZPos ? 1.0f : 0.0f;
+
+        // Base color with brightness affecting alpha only
+        ColorA baseColor = applyMapping(unmap);
+
+        // Apply overall brightness and audio reactivity to alpha only
+        float audioMod = 1.0f + (getAudioAmplitude(renderer) * 0.2f);
+        float totalBrightness = mBrightness * audioMod;
+
+        baseColor.a = std::min(baseColor.a * totalBrightness, 1.0f);
+        config.color = baseColor;
+
+        return config;
+    }
+
+    void update(float time, float dt) override {
+        mTime = time;
+    }
+};
+
+// ============================================================================
 // Pattern Factory
 // ============================================================================
 std::unique_ptr<Pattern> PatternFactory::create(int id) {
@@ -1574,6 +1691,7 @@ std::unique_ptr<Pattern> PatternFactory::create(int id) {
         case 20: return std::unique_ptr<Pattern>(new Pattern20());
         case 21: return std::unique_ptr<Pattern>(new Pattern21());
         case 22: return std::unique_ptr<Pattern>(new Pattern22());
+        case 23: return std::unique_ptr<Pattern>(new Pattern23());
         default: return nullptr;
     }
 }

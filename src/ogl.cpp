@@ -23,6 +23,11 @@
 
 #include "ogl.h"
 #include "cinder/BSpline.h"
+#include "cinder/audio/Context.h"
+#include "cinder/audio/InputNode.h"
+#include "cinder/audio/MonitorNode.h"
+#include "cinder/audio/Device.h"
+#include <algorithm>
 
 void GraphicsRenderer::setupOgl () {
 
@@ -205,7 +210,7 @@ void GraphicsRenderer::reshape() {
 }
 
 void GraphicsRenderer::updateAudioFeatures() {
-	// Extract audio features from the SOM input vector via BMU activity
+	// Extract audio features directly from MFCC input vector
 	if (!ptrWorld || !ptrWorld->initialized()) {
 		mAudioAmplitude = 0.0f;
 		mAudioLowBand = 0.0f;
@@ -214,55 +219,312 @@ void GraphicsRenderer::updateAudioFeatures() {
 		return;
 	}
 
-	// Use the current BMU (Best Matching Unit) as a proxy for audio energy
-	// The BMU is updated when new MFCC vectors are sent via OSC
-	float totalEnergy = 0.0f;
-	float lowEnergy = 0.0f;
-	float midEnergy = 0.0f;
-	float highEnergy = 0.0f;
+	// Get the current MFCC input vector (sent from SuperCollider)
+	const std::vector<double>& mfcc = ptrWorld->getInputVector();
 
-	if (ptrWorld->currentBMU()) {
-		// Use BMU cell phase as energy indicator
-		float bmuState = ptrWorld->currentBMU()->phase;
-		totalEnergy = bmuState;
-
-		// Map BMU spatial position to frequency bands
-		// Lower X values = low frequencies, higher X = high frequencies
-		int bmuX = ptrWorld->currentBMU()->x;
-		int bmuY = ptrWorld->currentBMU()->y;
-		int bmuZ = ptrWorld->currentBMU()->z;
-
-		// Normalize positions to 0-1 range
-		float normX = (float)bmuX / std::max(1, ptrWorld->sizeX() - 1);
-		float normY = (float)bmuY / std::max(1, ptrWorld->sizeY() - 1);
-		float normZ = (float)bmuZ / std::max(1, ptrWorld->sizeZ() - 1);
-
-		// Map to frequency bands (weighted by overall energy)
-		lowEnergy = (1.0f - normX) * bmuState;  // Low X = low freq
-		midEnergy = (1.0f - normY) * bmuState;  // Mid range
-		highEnergy = normZ * bmuState;          // High Z = high freq
+	if (mfcc.empty()) {
+		return;
 	}
 
-	// Smooth the values with exponential moving average for subtle, gradual changes
-	float smoothing = 0.85f;  // High smoothing (0-1, higher = smoother)
+	// MFCC coefficients represent different frequency bands
+	// MFCC 0 = overall energy (DC component)
+	// MFCC 1-4 = low frequencies (bass)
+	// MFCC 5-9 = mid frequencies
+	// MFCC 10+ = high frequencies (treble)
+
+	int numCoeffs = mfcc.size();
+
+	// Extract total energy from MFCC[0] or sum of all coefficients
+	float totalEnergy = 0.0f;
+	for (int i = 0; i < numCoeffs; i++) {
+		totalEnergy += std::abs(mfcc[i]);
+	}
+	totalEnergy /= numCoeffs;
+
+	// Low frequency energy (MFCC 0-4)
+	float lowEnergy = 0.0f;
+	int lowEnd = std::min(5, numCoeffs);
+	for (int i = 0; i < lowEnd; i++) {
+		lowEnergy += std::abs(mfcc[i]);
+	}
+	if (lowEnd > 0) lowEnergy /= lowEnd;
+
+	// Mid frequency energy (MFCC 5-9)
+	float midEnergy = 0.0f;
+	int midStart = 5;
+	int midEnd = std::min(10, numCoeffs);
+	if (midStart < numCoeffs) {
+		for (int i = midStart; i < midEnd; i++) {
+			midEnergy += std::abs(mfcc[i]);
+		}
+		midEnergy /= (midEnd - midStart);
+	}
+
+	// High frequency energy (MFCC 10+)
+	float highEnergy = 0.0f;
+	int highStart = 10;
+	if (highStart < numCoeffs) {
+		for (int i = highStart; i < numCoeffs; i++) {
+			highEnergy += std::abs(mfcc[i]);
+		}
+		highEnergy /= (numCoeffs - highStart);
+	}
+
+	// Debug output every 60 frames - show RAW values and first few MFCCs
+	static int debugCounter = 0;
+	if (++debugCounter >= 60) {
+		console() << "MFCC RAW: Amp=" << totalEnergy
+		          << " Low=" << lowEnergy
+		          << " Mid=" << midEnergy
+		          << " High=" << highEnergy << " | ";
+
+		// Show first 5 MFCC values to see if they're varying
+		console() << "MFCCs[0-4]: ";
+		for (int i = 0; i < std::min(5, numCoeffs); i++) {
+			console() << mfcc[i] << " ";
+		}
+		console() << std::endl;
+		debugCounter = 0;
+	}
+
+	// Track min/max for adaptive normalization (to expand dynamic range)
+	static float minAmp = 1.0f, maxAmp = 0.0f;
+	static float minLow = 1.0f, maxLow = 0.0f;
+	static float minMid = 1.0f, maxMid = 0.0f;
+	static float minHigh = 1.0f, maxHigh = 0.0f;
+
+	// Update running min/max (with slow decay to adapt to changes)
+	float decay = 0.999f;  // Very slow decay
+	minAmp = std::min(minAmp * decay + totalEnergy * (1.0f - decay), totalEnergy);
+	maxAmp = std::max(maxAmp * decay + totalEnergy * (1.0f - decay), totalEnergy);
+	minLow = std::min(minLow * decay + lowEnergy * (1.0f - decay), lowEnergy);
+	maxLow = std::max(maxLow * decay + lowEnergy * (1.0f - decay), lowEnergy);
+	minMid = std::min(minMid * decay + midEnergy * (1.0f - decay), midEnergy);
+	maxMid = std::max(maxMid * decay + midEnergy * (1.0f - decay), midEnergy);
+	minHigh = std::min(minHigh * decay + highEnergy * (1.0f - decay), highEnergy);
+	maxHigh = std::max(maxHigh * decay + highEnergy * (1.0f - decay), highEnergy);
+
+	// Normalize to 0-1 range using adaptive min/max
+	auto normalize = [](float val, float min, float max) {
+		float range = max - min;
+		if (range < 0.01f) return 0.5f;  // Avoid division by zero
+		return std::min(1.0f, std::max(0.0f, (val - min) / range));
+	};
+
+	float normAmp = normalize(totalEnergy, minAmp, maxAmp);
+	float normLow = normalize(lowEnergy, minLow, maxLow);
+	float normMid = normalize(midEnergy, minMid, maxMid);
+	float normHigh = normalize(highEnergy, minHigh, maxHigh);
+
+	// Smooth the NORMALIZED values
+	float smoothing = 0.3f;  // Lower smoothing for more responsiveness
+	mAudioAmplitude = mAudioAmplitude * smoothing + normAmp * (1.0f - smoothing);
+	mAudioLowBand = mAudioLowBand * smoothing + normLow * (1.0f - smoothing);
+	mAudioMidBand = mAudioMidBand * smoothing + normMid * (1.0f - smoothing);
+	mAudioHighBand = mAudioHighBand * smoothing + normHigh * (1.0f - smoothing);
+}
+
+void GraphicsRenderer::setupAudioInput(bool useOutput) {
+	auto ctx = audio::Context::master();
+	mUseOutputDevice = useOutput;
+
+	// Get appropriate device (input or output)
+	audio::DeviceRef device;
+	if (useOutput) {
+		device = audio::Device::getDefaultOutput();
+		console() << "Attempting to use output device (requires loopback driver like BlackHole)" << std::endl;
+	} else {
+		device = audio::Device::getDefaultInput();
+	}
+
+	if (!device) {
+		console() << "No default audio " << (useOutput ? "output" : "input") << " device found" << std::endl;
+		return;
+	}
+
+	console() << "Using audio " << (useOutput ? "output" : "input") << " device: " << device->getName() << std::endl;
+
+	// Create input node with selected device
+	auto format = audio::Node::Format().autoEnable();
+	mAudioInput = ctx->createInputDeviceNode(device, format);
+
+	// Create FFT node for spectral analysis
+	auto monitorFormat = audio::MonitorSpectralNode::Format().fftSize(2048).windowSize(1024);
+	mMonitorSpectralNode = ctx->makeNode(new audio::MonitorSpectralNode(monitorFormat));
+
+	// Connect input to FFT
+	mAudioInput >> mMonitorSpectralNode;
+
+	// Enable the input (but don't start processing yet)
+	mAudioInput->enable();
+	ctx->enable();
+
+	console() << "Audio setup complete" << std::endl;
+}
+
+void GraphicsRenderer::setupAudioFromDevice(const std::string& deviceName) {
+	auto ctx = audio::Context::master();
+
+	// List all available devices
+	console() << "Available audio devices:" << std::endl;
+	auto devices = audio::Device::getDevices();
+	audio::DeviceRef targetDevice = nullptr;
+
+	for (const auto& dev : devices) {
+		console() << "  - " << dev->getName() << " (Input: " << dev->getNumInputChannels()
+		          << ", Output: " << dev->getNumOutputChannels() << ")" << std::endl;
+
+		// Case-insensitive partial match
+		std::string devNameLower = dev->getName();
+		std::string targetNameLower = deviceName;
+		std::transform(devNameLower.begin(), devNameLower.end(), devNameLower.begin(), ::tolower);
+		std::transform(targetNameLower.begin(), targetNameLower.end(), targetNameLower.begin(), ::tolower);
+
+		if (devNameLower.find(targetNameLower) != std::string::npos && dev->getNumInputChannels() > 0) {
+			targetDevice = dev;
+		}
+	}
+
+	if (!targetDevice) {
+		console() << "Device '" << deviceName << "' not found or has no input channels" << std::endl;
+		return;
+	}
+
+	console() << "Using audio device: " << targetDevice->getName() << std::endl;
+
+	// Create input node with selected device
+	auto format = audio::Node::Format().autoEnable();
+	mAudioInput = ctx->createInputDeviceNode(targetDevice, format);
+
+	// Create FFT node for spectral analysis
+	auto monitorFormat = audio::MonitorSpectralNode::Format().fftSize(2048).windowSize(1024);
+	mMonitorSpectralNode = ctx->makeNode(new audio::MonitorSpectralNode(monitorFormat));
+
+	// Connect input to FFT
+	mAudioInput >> mMonitorSpectralNode;
+
+	// Enable the input
+	mAudioInput->enable();
+	ctx->enable();
+
+	mAudioInputEnabled = true;
+	console() << "Audio from device setup complete" << std::endl;
+}
+
+void GraphicsRenderer::enableAudioInput(bool enable) {
+	mAudioInputEnabled = enable;
+
+	if (enable && !mAudioInput) {
+		setupAudioInput();
+	}
+
+	console() << "Audio input " << (enable ? "enabled" : "disabled") << std::endl;
+}
+
+void GraphicsRenderer::updateAudioFromInput() {
+	if (!mAudioInputEnabled || !mMonitorSpectralNode) {
+		return;
+	}
+
+	// Get magnitude spectrum from FFT
+	mMagSpectrum = mMonitorSpectralNode->getMagSpectrum();
+
+	if (mMagSpectrum.empty()) {
+		return;
+	}
+
+	// Calculate total energy
+	float totalEnergy = 0.0f;
+	for (float mag : mMagSpectrum) {
+		totalEnergy += mag;
+	}
+	totalEnergy /= mMagSpectrum.size();
+
+	// Extract frequency bands
+	// Assuming 44100 Hz sample rate and 2048 FFT size
+	// Each bin = 44100 / 2048 ≈ 21.5 Hz
+	int numBins = mMagSpectrum.size();
+
+	// Low band: 0-200 Hz (bins 0-9)
+	int lowEnd = std::min(10, numBins);
+	float lowEnergy = 0.0f;
+	for (int i = 0; i < lowEnd; i++) {
+		lowEnergy += mMagSpectrum[i];
+	}
+	lowEnergy /= lowEnd;
+
+	// Mid band: 200-2000 Hz (bins 10-93)
+	int midStart = 10;
+	int midEnd = std::min(94, numBins);
+	float midEnergy = 0.0f;
+	for (int i = midStart; i < midEnd; i++) {
+		midEnergy += mMagSpectrum[i];
+	}
+	midEnergy /= (midEnd - midStart);
+
+	// High band: 2000Hz+ (bins 94+)
+	int highStart = 94;
+	float highEnergy = 0.0f;
+	if (highStart < numBins) {
+		for (int i = highStart; i < numBins; i++) {
+			highEnergy += mMagSpectrum[i];
+		}
+		highEnergy /= (numBins - highStart);
+	}
+
+	// Smooth the values (exponential moving average)
+	float smoothing = 0.8f;
 	mAudioAmplitude = mAudioAmplitude * smoothing + totalEnergy * (1.0f - smoothing);
 	mAudioLowBand = mAudioLowBand * smoothing + lowEnergy * (1.0f - smoothing);
 	mAudioMidBand = mAudioMidBand * smoothing + midEnergy * (1.0f - smoothing);
 	mAudioHighBand = mAudioHighBand * smoothing + highEnergy * (1.0f - smoothing);
 
-	// Normalize to 0-1 range
-	mAudioAmplitude = std::min(1.0f, std::max(0.0f, mAudioAmplitude));
-	mAudioLowBand = std::min(1.0f, std::max(0.0f, mAudioLowBand));
-	mAudioMidBand = std::min(1.0f, std::max(0.0f, mAudioMidBand));
-	mAudioHighBand = std::min(1.0f, std::max(0.0f, mAudioHighBand));
+	// Debug output every 60 frames (~1 second) - show raw values
+	static int debugCounter = 0;
+	if (++debugCounter >= 60) {
+		console() << "Audio RAW: Amp=" << mAudioAmplitude
+		          << " Low=" << mAudioLowBand
+		          << " Mid=" << mAudioMidBand
+		          << " High=" << mAudioHighBand << std::endl;
+		debugCounter = 0;
+	}
+
+	// Normalize to 0-1 range with adaptive scaling
+	// Use much lower scale - FFT magnitudes are typically very small
+	float scale = 100.0f;
+	mAudioAmplitude = std::min(1.0f, std::max(0.0f, mAudioAmplitude * scale));
+	mAudioLowBand = std::min(1.0f, std::max(0.0f, mAudioLowBand * scale));
+	mAudioMidBand = std::min(1.0f, std::max(0.0f, mAudioMidBand * scale));
+	mAudioHighBand = std::min(1.0f, std::max(0.0f, mAudioHighBand * scale));
 }
 
 void GraphicsRenderer::update() {
-	// Update audio features from SOM BMU
-	updateAudioFeatures();
+	// FPS monitoring - update every second
+	float currentTime = static_cast<float>(app::getElapsedSeconds());
+	mFrameCount++;
+
+	if (currentTime - mFpsLastTime >= 1.0f) {
+		mCurrentFps = mFrameCount / (currentTime - mFpsLastTime);
+
+		// Get window size for display debugging
+		ivec2 windowSize = getWindowSize();
+
+		console() << "FPS: " << mCurrentFps
+		          << " | Alive: " << ptrWorld->alive()
+		          << " | Resolution: " << windowSize.x << "x" << windowSize.y
+		          << " | Audio: " << mAudioAmplitude << std::endl;
+		mFrameCount = 0;
+		mFpsLastTime = currentTime;
+	}
+
+	// Update audio features from either real audio input or SOM BMU
+	if (mAudioInputEnabled) {
+		updateAudioFromInput();
+	} else {
+		updateAudioFeatures();
+	}
 
 	// Update pattern animations
-	float currentTime = static_cast<float>(app::getElapsedSeconds());
 	float dt = currentTime - mLastTime;
 	mLastTime = currentTime;
 
@@ -447,6 +709,34 @@ void GraphicsRenderer::startDraw() {
 
 	// Clear instance data for this frame
 	clearInstanceData();
+
+	// Pre-reserve capacity to avoid reallocations during frame
+	// Worst case: 17^3 cells = 4913, with Pattern00/23 = ~24 instances per cell
+	// Reserve conservatively for ~10k instances
+	static bool reserved = false;
+	if (!reserved) {
+		mCubePositions.reserve(10000);
+		mCubeColors.reserve(10000);
+		mCubeScales.reserve(10000);
+		mCubeTextures.reserve(10000);
+
+		mSpherePositions.reserve(10000);
+		mSphereColors.reserve(10000);
+		mSphereRadii.reserve(10000);
+		mSpherePatternIds.reserve(10000);
+
+		mLineStarts.reserve(20000);
+		mLineEnds.reserve(20000);
+		mLineColors.reserve(20000);
+		mLineWidths.reserve(20000);
+
+		mPlaneInstances.reserve(10000);
+		mTriangleVertices.reserve(30000);
+		mTriangleColors.reserve(30000);
+
+		reserved = true;
+		console() << "Pre-allocated instance buffers for stable performance" << std::endl;
+	}
 }
 
 void GraphicsRenderer::drawCubeInstances() {
@@ -1653,7 +1943,6 @@ void GraphicsRenderer::drawBoids() {
 }
 
 void GraphicsRenderer::drawFragment(Cell* cell) {
-
 	int x, y, z;
 	currentCell = cell;
 	x = currentCell->x;
@@ -1661,6 +1950,13 @@ void GraphicsRenderer::drawFragment(Cell* cell) {
 	z = currentCell->z;
 
 	state = currentCell->phase;
+
+	// Early exit for dead cells - check actual state, not interpolated phase
+	// phase can be > 0 during interpolation even when cell is dead (states[index] = 0)
+	double actualState = currentCell->states[ptrWorld->index()];
+	if (actualState <= 0.0) {
+		return;
+	}
 
 	// New pattern system: iterate through all patterns
 	for (const auto& pattern : mPatterns) {
@@ -1748,7 +2044,65 @@ void GraphicsRenderer::drawFragment(Cell* cell) {
 			case RenderMode::PLANES: {
 				int patternId = pattern->getId();
 
-				if (patternId == 8) {
+				if (patternId == 0) {
+					// Pattern00: Nested boundary rectangles with inverse alpha
+					float unmap = config.customFloats.at("unmap");
+
+					bool onXNeg = config.customFloats.at("onXNeg") > 0.5f;
+					bool onYNeg = config.customFloats.at("onYNeg") > 0.5f;
+					bool onZNeg = config.customFloats.at("onZNeg") > 0.5f;
+					bool onXPos = config.customFloats.at("onXPos") > 0.5f;
+					bool onYPos = config.customFloats.at("onYPos") > 0.5f;
+					bool onZPos = config.customFloats.at("onZPos") > 0.5f;
+
+					// Draw 4 nested rectangles at sizes: 0.25, 0.5, 0.75, 1.0
+					// with alpha = 1/size (larger rects have smaller alpha)
+					float sizes[] = {0.25f, 0.5f, 0.75f, 1.0f};
+
+					for (int i = 0; i < 4; i++) {
+						float size = sizes[i];
+						float alpha = 1.0f / size;  // Inverse relationship
+
+						// Clamp alpha to reasonable range
+						alpha = std::min(alpha, 1.0f);
+
+						// Calculate rectangle dimensions for this size
+						float xL_nest = (float)x * fragSizeX + (fragSizeX * 0.5f) - (fragSizeX * unmap * size) - hx;
+						float yB_nest = (float)y * fragSizeY + (fragSizeY * 0.5f) - (fragSizeY * unmap * size) - hx;
+						float zF_nest = (float)z * fragSizeZ + (fragSizeZ * 0.5f) - (fragSizeZ * unmap * size) - hx;
+
+						float xW_nest = fragSizeX * unmap * size * 2.0f;
+						float yH_nest = fragSizeY * unmap * size * 2.0f;
+						float zD_nest = fragSizeZ * unmap * size * 2.0f;
+
+						// Create color with scaled alpha
+						ColorA rectColor = config.color;
+						rectColor.a *= alpha;
+
+						// First (smallest) rect is filled, others are wireframe
+						bool isWireframe = (i > 0);
+
+						// Draw on each boundary
+						if (onXNeg) {
+							addPlaneInstance(vec3(xL_nest, yB_nest, zF_nest), vec3(xW_nest, yH_nest, zD_nest), rectColor, 1, isWireframe);
+						}
+						if (onYNeg) {
+							addPlaneInstance(vec3(xL_nest, yB_nest, zF_nest), vec3(xW_nest, yH_nest, zD_nest), rectColor, 2, isWireframe);
+						}
+						if (onZNeg) {
+							addPlaneInstance(vec3(xL_nest, yB_nest, zF_nest), vec3(xW_nest, yH_nest, zD_nest), rectColor, 0, isWireframe);
+						}
+						if (onXPos) {
+							addPlaneInstance(vec3(xL_nest, yB_nest, zF_nest), vec3(xW_nest, yH_nest, zD_nest), rectColor, 1, isWireframe);
+						}
+						if (onYPos) {
+							addPlaneInstance(vec3(xL_nest, yB_nest, zF_nest), vec3(xW_nest, yH_nest, zD_nest), rectColor, 2, isWireframe);
+						}
+						if (onZPos) {
+							addPlaneInstance(vec3(xL_nest, yB_nest, zF_nest), vec3(xW_nest, yH_nest, zD_nest), rectColor, 0, isWireframe);
+						}
+					}
+				} else if (patternId == 8) {
 					// Pattern08: Center planes with nested rectangles
 					float unmap = config.customFloats.at("unmap");
 					bool onXPlane = config.customFloats.at("onXPlane") > 0.5f;
@@ -1757,8 +2111,8 @@ void GraphicsRenderer::drawFragment(Cell* cell) {
 
 				// Draw initial stroked/filled rectangles
 				float xL_base = (float)x * fragSizeX + (fragSizeX * 0.5f) - (fragSizeX * unmap) - hx;
-				float yB_base = (float)y * fragSizeY + (fragSizeY * 0.5f) - (fragSizeY * unmap) - hx;
-				float zF_base = (float)z * fragSizeZ + (fragSizeZ * 0.5f) - (fragSizeZ * unmap) - hx;
+				float yB_base = (float)y * fragSizeY + (fragSizeY * 0.5f) - (fragSizeY * unmap) - hy;
+				float zF_base = (float)z * fragSizeZ + (fragSizeZ * 0.5f) - (fragSizeZ * unmap) - hz;
 
 				float xW_base = fragSizeX * unmap * 2.0f;
 				float yH_base = fragSizeY * unmap * 2.0f;
@@ -1783,13 +2137,15 @@ void GraphicsRenderer::drawFragment(Cell* cell) {
 				ColorA currentColor = config.color;
 
 				for (int i = 0; i < 4; i++) {
-					float xL_nest = (float)x * fragSizeX + (fragSizeX * sizes[i]) - (fragSizeX * unmap) - hx;
-					float yB_nest = (float)y * fragSizeY + (fragSizeY * sizes[i]) - (fragSizeY * unmap) - hx;
-					float zF_nest = (float)z * fragSizeZ + (fragSizeZ * sizes[i]) - (fragSizeZ * unmap) - hx;
+					// Center each nested rectangle properly
+					float scale = unmap * (2.0f - sizes[i]);
+					float xL_nest = (float)x * fragSizeX + (fragSizeX * 0.5f) - (fragSizeX * scale) - hx;
+					float yB_nest = (float)y * fragSizeY + (fragSizeY * 0.5f) - (fragSizeY * scale) - hy;
+					float zF_nest = (float)z * fragSizeZ + (fragSizeZ * 0.5f) - (fragSizeZ * scale) - hz;
 
-					float xW_nest = fragSizeX * unmap * (1.0f / sizes[i]);
-					float yH_nest = fragSizeY * unmap * (1.0f / sizes[i]);
-					float zD_nest = fragSizeZ * unmap * (1.0f / sizes[i]);
+					float xW_nest = fragSizeX * scale * 2.0f;
+					float yH_nest = fragSizeY * scale * 2.0f;
+					float zD_nest = fragSizeZ * scale * 2.0f;
 
 					// Fade alpha for each nested level
 					currentColor.a *= 0.87f;
@@ -2291,6 +2647,94 @@ void GraphicsRenderer::drawFragment(Cell* cell) {
 										   (neighborColors[i].g + neighborColors[nextIdx].g) * 0.5f,
 										   (neighborColors[i].b + neighborColors[nextIdx].b) * 0.5f,
 										   (neighborColors[i].a + neighborColors[nextIdx].a) * 0.5f), 1.0f);
+							}
+						}
+					}
+				}
+				else if (patternId == 23) {
+					// Pattern23: Hexagonal boundary cells
+					float unmap = config.customFloats.at("unmap");
+
+					bool onXNeg = config.customFloats.at("onXNeg") > 0.5f;
+					bool onYNeg = config.customFloats.at("onYNeg") > 0.5f;
+					bool onZNeg = config.customFloats.at("onZNeg") > 0.5f;
+					bool onXPos = config.customFloats.at("onXPos") > 0.5f;
+					bool onYPos = config.customFloats.at("onYPos") > 0.5f;
+					bool onZPos = config.customFloats.at("onZPos") > 0.5f;
+
+					// Draw 4 nested hexagons at sizes: 0.25, 0.5, 0.75, 1.0
+					float sizes[] = {0.25f, 0.5f, 0.75f, 1.0f};
+
+					for (int i = 0; i < 4; i++) {
+						float size = sizes[i];
+						float alpha = 1.0f / size;  // Inverse relationship
+						alpha = std::min(alpha, 1.0f);
+
+						// Create color with scaled alpha
+						ColorA hexColor = config.color;
+						hexColor.a *= alpha;
+
+						// First (smallest) hexagon is filled, others are wireframe
+						bool isFilled = (i == 0);
+
+						// Calculate hexagon center and radius
+						float centerX = (float)x * fragSizeX + (fragSizeX * 0.5f) - hx;
+						float centerY = (float)y * fragSizeY + (fragSizeY * 0.5f) - hx;
+						float centerZ = (float)z * fragSizeZ + (fragSizeZ * 0.5f) - hx;
+
+						float radius = fragSizeX * unmap * size;
+
+						// Draw hexagons on appropriate boundaries
+						if (onXNeg || onXPos) {
+							// YZ plane hexagon
+							for (int v = 0; v < 6; v++) {
+								float angle1 = (v / 6.0f) * 2.0f * M_PI;
+								float angle2 = ((v + 1) / 6.0f) * 2.0f * M_PI;
+
+								vec3 v1(centerX, centerY + radius * cos(angle1), centerZ + radius * sin(angle1));
+								vec3 v2(centerX, centerY + radius * cos(angle2), centerZ + radius * sin(angle2));
+
+								if (isFilled) {
+									// Draw filled triangle from center
+									addTriangleInstance(vec3(centerX, centerY, centerZ), v1, v2, hexColor, hexColor, hexColor);
+								} else {
+									// Draw wireframe edge
+									addLineInstance(v1, v2, hexColor, 1.0f);
+								}
+							}
+						}
+
+						if (onYNeg || onYPos) {
+							// XZ plane hexagon
+							for (int v = 0; v < 6; v++) {
+								float angle1 = (v / 6.0f) * 2.0f * M_PI;
+								float angle2 = ((v + 1) / 6.0f) * 2.0f * M_PI;
+
+								vec3 v1(centerX + radius * cos(angle1), centerY, centerZ + radius * sin(angle1));
+								vec3 v2(centerX + radius * cos(angle2), centerY, centerZ + radius * sin(angle2));
+
+								if (isFilled) {
+									addTriangleInstance(vec3(centerX, centerY, centerZ), v1, v2, hexColor, hexColor, hexColor);
+								} else {
+									addLineInstance(v1, v2, hexColor, 1.0f);
+								}
+							}
+						}
+
+						if (onZNeg || onZPos) {
+							// XY plane hexagon
+							for (int v = 0; v < 6; v++) {
+								float angle1 = (v / 6.0f) * 2.0f * M_PI;
+								float angle2 = ((v + 1) / 6.0f) * 2.0f * M_PI;
+
+								vec3 v1(centerX + radius * cos(angle1), centerY + radius * sin(angle1), centerZ);
+								vec3 v2(centerX + radius * cos(angle2), centerY + radius * sin(angle2), centerZ);
+
+								if (isFilled) {
+									addTriangleInstance(vec3(centerX, centerY, centerZ), v1, v2, hexColor, hexColor, hexColor);
+								} else {
+									addLineInstance(v1, v2, hexColor, 1.0f);
+								}
 							}
 						}
 					}
