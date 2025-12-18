@@ -200,6 +200,8 @@ void GraphicsRenderer::setupOgl () {
 	auto lineVbo = gl::Vbo::create(GL_ARRAY_BUFFER, lineVerts.size() * sizeof(float), lineVerts.data(), GL_STATIC_DRAW);
 	mLineMesh = gl::VboMesh::create(2, GL_LINES, { {lineGeom, lineVbo} });
 
+	// Post-processing setup is done lazily when first enabled
+
 }
 
 void GraphicsRenderer::reshape() {
@@ -207,6 +209,234 @@ void GraphicsRenderer::reshape() {
 	mCam.setPerspective(45.0, getWindowAspectRatio(), 0.1f, 2000.0f);
 	gl::setMatrices( mCam );
 
+	// Recreate FBO on window resize if any effect is active
+	if (mCurrentEffect != EFFECT_NONE && mFbo) {
+		setupPostProcessing();
+	}
+
+}
+
+void GraphicsRenderer::setupPostProcessing() {
+	console() << "Setting up post-processing effects..." << std::endl;
+
+	// Create FBO for rendering scene to texture
+	try {
+		gl::Fbo::Format format;
+		format.setSamples(4);  // 4x MSAA
+		format.setColorTextureFormat(gl::Texture::Format().internalFormat(GL_RGBA8));
+		mFbo = gl::Fbo::create(getWindowWidth(), getWindowHeight(), format);
+		console() << "FBO created: " << getWindowWidth() << "x" << getWindowHeight() << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error creating FBO: " << e.what() << std::endl;
+		mCurrentEffect = EFFECT_NONE;
+		return;
+	}
+
+	// Load all effect shaders
+	try {
+		auto vertPath = app::loadAsset("blur.vert");
+		auto fragPath = app::loadAsset("blur.frag");
+		mBlurShader = gl::GlslProg::create(vertPath, fragPath);
+		console() << "Blur shader loaded" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error loading blur shader: " << e.what() << std::endl;
+	}
+
+	try {
+		auto vertPath = app::loadAsset("blur.vert");  // Reuse same vertex shader
+		auto fragPath = app::loadAsset("radial.frag");
+		mRadialShader = gl::GlslProg::create(vertPath, fragPath);
+		console() << "Radial shader loaded" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error loading radial shader: " << e.what() << std::endl;
+	}
+
+	try {
+		auto vertPath = app::loadAsset("blur.vert");  // Reuse same vertex shader
+		auto fragPath = app::loadAsset("motion.frag");
+		mMotionShader = gl::GlslProg::create(vertPath, fragPath);
+		console() << "Motion shader loaded" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error loading motion shader: " << e.what() << std::endl;
+	}
+
+	try {
+		auto vertPath = app::loadAsset("blur.vert");  // Reuse same vertex shader
+		auto fragPath = app::loadAsset("glitch.frag");
+		mGlitchShader = gl::GlslProg::create(vertPath, fragPath);
+		console() << "Glitch shader loaded" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error loading glitch shader: " << e.what() << std::endl;
+	}
+
+	// Create fullscreen quad for post-processing (shader will be set dynamically)
+	auto rect = geom::Rect(Rectf(-1, -1, 1, 1));
+	if (mBlurShader) {
+		mFullscreenQuad = gl::Batch::create(rect, mBlurShader);
+	}
+
+	console() << "Post-processing setup complete" << std::endl;
+}
+
+void GraphicsRenderer::setEffect(const std::string& type, bool enabled) {
+	if (!enabled) {
+		mCurrentEffect = EFFECT_NONE;
+		console() << "Effect disabled" << std::endl;
+		return;
+	}
+
+	// Map string to effect type
+	if (type == "blur") {
+		mCurrentEffect = EFFECT_BLUR;
+		// Default blur params: [amount]
+		mEffectParams = {0.5f};
+		console() << "Blur effect enabled (amount: 0.5)" << std::endl;
+	}
+	else if (type == "radial") {
+		mCurrentEffect = EFFECT_RADIAL;
+		// Default radial params: [centerX, centerY, amount, samples]
+		mEffectParams = {0.5f, 0.5f, 0.0f, 12.0f};
+		console() << "Radial blur effect enabled (center: 0.5,0.5 amount: 0.0 samples: 12)" << std::endl;
+	}
+	else if (type == "motion") {
+		mCurrentEffect = EFFECT_MOTION;
+		// Default motion params: [angle, amount, samples]
+		mEffectParams = {0.0f, 0.0f, 12.0f};
+		console() << "Motion blur effect enabled (angle: 0 amount: 0.0 samples: 12)" << std::endl;
+	}
+	else if (type == "glitch") {
+		mCurrentEffect = EFFECT_GLITCH;
+		// Default glitch params: [amount, time, rgbOffset, blockiness]
+		mEffectParams = {0.5f, 0.0f, 1.0f, 1.0f};
+		console() << "Glitch effect enabled (amount: 0.5 rgbOffset: 1.0 blockiness: 1.0)" << std::endl;
+	}
+	else {
+		console() << "Unknown effect type: " << type << std::endl;
+		mCurrentEffect = EFFECT_NONE;
+	}
+}
+
+void GraphicsRenderer::setEffectParams(const std::vector<float>& params) {
+	mEffectParams = params;
+	console() << "Effect params updated: " << params.size() << " values" << std::endl;
+}
+
+void GraphicsRenderer::applyEffect() {
+	// Unbind FBO and render to screen
+	mFbo->unbindFramebuffer();
+
+	// Clear screen with background color
+	gl::clear(Color(_bgr, _bgg, _bgb));
+
+	// Disable depth test for fullscreen quad
+	gl::ScopedDepth scopedDepth(false);
+
+	// Use identity matrices for fullscreen quad in NDC (-1 to 1)
+	gl::ScopedMatrices scopedMatrices;
+	gl::setMatrices(CameraOrtho(-1, 1, -1, 1, -1, 1));
+
+	// Select shader based on current effect
+	gl::GlslProgRef shader;
+	switch (mCurrentEffect) {
+		case EFFECT_BLUR:
+			shader = mBlurShader;
+			break;
+		case EFFECT_RADIAL:
+			shader = mRadialShader;
+			break;
+		case EFFECT_MOTION:
+			shader = mMotionShader;
+			break;
+		case EFFECT_GLITCH:
+			shader = mGlitchShader;
+			break;
+		default:
+			return;  // No effect
+	}
+
+	if (!shader) return;
+
+	// Bind shader and set uniforms
+	gl::ScopedGlslProg scopedShader(shader);
+	shader->uniform("uTexture", 0);
+
+	// Set effect-specific uniforms
+	switch (mCurrentEffect) {
+		case EFFECT_BLUR: {
+			// Blur shader needs texel size for kernel sampling
+			shader->uniform("uTexelSize", vec2(1.0f / getWindowWidth(), 1.0f / getWindowHeight()));
+			// params[0] = amount
+			float amount = mEffectParams.size() > 0 ? mEffectParams[0] : 0.5f;
+			shader->uniform("uBlurAmount", amount);
+			break;
+		}
+		case EFFECT_RADIAL: {
+			// params[0] = centerX, params[1] = centerY, params[2] = amount, params[3] = samples
+			vec4 params(
+				mEffectParams.size() > 0 ? mEffectParams[0] : 0.5f,
+				mEffectParams.size() > 1 ? mEffectParams[1] : 0.5f,
+				mEffectParams.size() > 2 ? mEffectParams[2] : 0.0f,
+				mEffectParams.size() > 3 ? mEffectParams[3] : 12.0f
+			);
+			shader->uniform("uParams", params);
+
+			// Debug output (only every 60 frames to avoid spam)
+			static int frameCounter = 0;
+			if (frameCounter++ % 60 == 0) {
+				console() << "Radial params: center(" << params.x << "," << params.y
+				          << ") amount=" << params.z << " samples=" << params.w << std::endl;
+			}
+			break;
+		}
+		case EFFECT_MOTION: {
+			// params[0] = angle, params[1] = amount, params[2] = samples
+			vec4 params(
+				mEffectParams.size() > 0 ? mEffectParams[0] : 0.0f,
+				mEffectParams.size() > 1 ? mEffectParams[1] : 0.0f,
+				mEffectParams.size() > 2 ? mEffectParams[2] : 12.0f,
+				0.0f
+			);
+			shader->uniform("uParams", params);
+
+			// Debug output (only every 60 frames to avoid spam)
+			static int frameCounter = 0;
+			if (frameCounter++ % 60 == 0) {
+				console() << "Motion params: angle=" << params.x
+				          << " amount=" << params.y << " samples=" << params.z << std::endl;
+			}
+			break;
+		}
+		case EFFECT_GLITCH: {
+			// params[0] = amount, params[1] = time (auto-updated), params[2] = rgbOffset, params[3] = blockiness
+			// Update time parameter automatically
+			if (mEffectParams.size() > 1) {
+				mEffectParams[1] = static_cast<float>(app::getElapsedSeconds());
+			}
+			vec4 params(
+				mEffectParams.size() > 0 ? mEffectParams[0] : 0.5f,
+				mEffectParams.size() > 1 ? mEffectParams[1] : 0.0f,
+				mEffectParams.size() > 2 ? mEffectParams[2] : 1.0f,
+				mEffectParams.size() > 3 ? mEffectParams[3] : 1.0f
+			);
+			shader->uniform("uParams", params);
+			break;
+		}
+		default:
+			break;
+	}
+
+	// Bind FBO texture
+	gl::ScopedTextureBind scopedTexture(mFbo->getColorTexture(), 0);
+
+	// Create batch on-the-fly with current shader (batch caches its shader, so we recreate it)
+	auto rect = geom::Rect(Rectf(-1, -1, 1, 1)).texCoords(vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1));
+	auto batch = gl::Batch::create(rect, shader);
+	batch->draw();
 }
 
 void GraphicsRenderer::updateAudioFeatures() {
@@ -706,6 +936,19 @@ void GraphicsRenderer::startDraw() {
     glEnable(GL_LINE_SMOOTH);
     mGrid = gl::VertBatch::create( GL_LINES );
     mGrid->begin( GL_LINES );
+
+	// Bind FBO if any effect is enabled
+	if (mCurrentEffect != EFFECT_NONE) {
+		// Create FBO if it doesn't exist yet
+		if (!mFbo) {
+			setupPostProcessing();
+		}
+		if (mFbo) {
+			mFbo->bindFramebuffer();
+			// Clear with current background color
+			gl::clear(Color(_bgr, _bgg, _bgb));
+		}
+	}
 
 	// Clear instance data for this frame
 	clearInstanceData();
@@ -1647,6 +1890,11 @@ void GraphicsRenderer::endDraw() {
 			mapCodePanel();
 		else
 			drawCodePanel();
+	}
+
+	// Apply post-processing effects if enabled
+	if (mCurrentEffect != EFFECT_NONE && mFbo) {
+		applyEffect();
 	}
 
 	counter++;

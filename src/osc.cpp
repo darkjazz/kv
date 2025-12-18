@@ -391,6 +391,30 @@ void OSCMessenger::setUpListener() {
     [&]( const osc::Message &msg ){
         _ogl->codePanel.setCodeFont(msg.getArgString(0), msg.getArgInt32(1));
     });
+    _listener.setListener( "/lambda/efx/enable",
+    [&]( const osc::Message &msg ){
+        std::string type = msg.getArgString(0);
+        bool enabled = msg.getArgInt32(1) == 1;
+        _ogl->setEffect(type, enabled);
+    });
+    _listener.setListener( "/lambda/efx/params",
+    [&]( const osc::Message &msg ){
+        std::vector<float> params;
+        for (int i = 0; i < msg.getNumArgs(); i++) {
+            // Try to get as float, fall back to int if needed
+            try {
+                if (msg.getArgType(i) == osc::ArgType::INTEGER_32) {
+                    params.push_back(static_cast<float>(msg.getArgInt32(i)));
+                } else {
+                    params.push_back(msg.getArgFloat(i));
+                }
+            }
+            catch (const std::exception& e) {
+                console() << "Error parsing param " << i << ": " << e.what() << std::endl;
+            }
+        }
+        _ogl->setEffectParams(params);
+    });
     _listener.setListener( "/lambda/framerate",
     [&]( const osc::Message &msg ){
         setFrameRate(msg.getArgFloat(0));

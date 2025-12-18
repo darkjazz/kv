@@ -104,6 +104,8 @@ public:
 		mAudioHighBand = 0.0f;
 		mAudioInputEnabled = false;
 		mUseOutputDevice = false;
+		mCurrentEffect = EFFECT_NONE;
+		mEffectParams = {0.5f, 0.5f, 0.0f, 1.0f};  // Default params
 	};
 	
 	~GraphicsRenderer() {
@@ -222,6 +224,21 @@ public:
 	audio::MonitorSpectralNodeRef mMonitorSpectralNode;
 	std::vector<float> mMagSpectrum;
 
+	// Post-processing effects controls (public for OSC access)
+	enum EffectType {
+		EFFECT_NONE = 0,
+		EFFECT_BLUR,
+		EFFECT_RADIAL,
+		EFFECT_MOTION,
+		EFFECT_GLITCH
+	};
+
+	EffectType mCurrentEffect;
+	std::vector<float> mEffectParams;  // Variable parameters per effect
+
+	void setEffect(const std::string& type, bool enabled);
+	void setEffectParams(const std::vector<float>& params);
+
 private:
 
 	double fragSizeX, fragSizeY, fragSizeZ, state;
@@ -326,7 +343,17 @@ private:
 
 	gl::TextureCubeMapRef mCubeMap;   // fxic_* cubemap for Pattern05
 	gl::TextureCubeMapRef mCubeMap2;  // fxp_* cubemap for Pattern13
-	
+
+	// Post-processing FBO and shaders (private)
+	gl::FboRef mFbo;
+	gl::GlslProgRef mBlurShader;
+	gl::GlslProgRef mRadialShader;
+	gl::GlslProgRef mMotionShader;
+	gl::GlslProgRef mGlitchShader;
+	gl::BatchRef mFullscreenQuad;
+
+	void setupPostProcessing();
+	void applyEffect();
 
 	// pattern00 removed - now using new pattern system in pattern.cpp
 	// pattern01 removed - now using new pattern system in pattern.cpp
