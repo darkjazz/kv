@@ -262,6 +262,38 @@ void OSCMessenger::setUpListener() {
         console() << "Setting audio device to: " << deviceName << std::endl;
     });
 
+    // Waveform display toggle
+    _listener.setListener( "/lambda/audio/waveform",
+    [&]( const osc::Message &msg ){
+        bool enable = msg.getArgInt32(0) == 1;
+        _ogl->mShowWaveform = enable;
+        console() << "Waveform display " << (enable ? "enabled" : "disabled") << " via OSC" << std::endl;
+    });
+
+    // MFCC display toggle
+    _listener.setListener( "/lambda/audio/mfcc",
+    [&]( const osc::Message &msg ){
+        bool enable = msg.getArgInt32(0) == 1;
+        _ogl->mShowMFCC = enable;
+        console() << "MFCC display " << (enable ? "enabled" : "disabled") << " via OSC" << std::endl;
+    });
+
+    // Waveform 3D mapping toggle
+    _listener.setListener( "/lambda/audio/waveform/mapped",
+    [&]( const osc::Message &msg ){
+        bool enable = msg.getArgInt32(0) == 1;
+        _ogl->mWaveformMapped = enable;
+        console() << "Waveform 3D mapping " << (enable ? "enabled" : "disabled") << " via OSC" << std::endl;
+    });
+
+    // MFCC 3D mapping toggle
+    _listener.setListener( "/lambda/audio/mfcc/mapped",
+    [&]( const osc::Message &msg ){
+        bool enable = msg.getArgInt32(0) == 1;
+        _ogl->mMFCCMapped = enable;
+        console() << "MFCC 3D mapping " << (enable ? "enabled" : "disabled") << " via OSC" << std::endl;
+    });
+
     // Boid pattern system - matches old lambda app format
     _listener.setListener( "/lambda/graphics/boidpattern",
     [&]( const osc::Message &msg ){
