@@ -218,7 +218,8 @@ void GraphicsRenderer::setupOgl () {
 		console() << "Error creating audio visualization FBOs: " << e.what() << std::endl;
 	}
 
-	// Post-processing setup is done lazily when first enabled
+	// Initialize post-processing FBOs (including audio visualization FBOs)
+	setupPostProcessing();
 
 }
 
@@ -789,6 +790,11 @@ void GraphicsRenderer::updateAudioFromInput() {
 
 void GraphicsRenderer::computeMFCCs() {
 	if (mMagSpectrum.empty()) {
+		static bool warnedOnce = false;
+		if (!warnedOnce) {
+			console() << "computeMFCCs: mMagSpectrum is empty!" << std::endl;
+			warnedOnce = true;
+		}
 		return;
 	}
 
@@ -798,6 +804,13 @@ void GraphicsRenderer::computeMFCCs() {
 
 	int numBins = mMagSpectrum.size();
 	int numMFCC = mMFCCCoeffs.size();
+
+	// Debug output every 60 frames
+	static int mfccDebugCounter = 0;
+	if (++mfccDebugCounter >= 60) {
+		console() << "computeMFCCs: numBins=" << numBins << " numMFCC=" << numMFCC << std::endl;
+		mfccDebugCounter = 0;
+	}
 
 	// Create mel-scale filter banks (simplified)
 	std::vector<float> melEnergies(numMFCC, 0.0f);
@@ -832,12 +845,6 @@ void GraphicsRenderer::drawWaveform() {
 		return;
 	}
 
-	// If in mapped mode, render to FBO and return (don't draw to screen)
-	if (mWaveformMapped && mWaveformFbo) {
-		createWaveformTexture();
-		return;
-	}
-
 	// Disable depth testing for 2D overlay
 	gl::ScopedDepth scopedDepth(false);
 
@@ -856,8 +863,8 @@ void GraphicsRenderer::drawWaveform() {
 	float centerY = yStart + waveHeight / 2.0f;
 	gl::drawLine(vec2(xStart, centerY), vec2(xStart + waveWidth, centerY));
 
-	// Waveform - bright green
-	gl::color(0.0f, 1.0f, 0.0f, 1.0f);
+	// Waveform - use configured color
+	gl::color(mWaveformColor.x, mWaveformColor.y, mWaveformColor.z, 1.0f);
 	glLineWidth(2.0f);  // Thicker line for visibility
 	gl::begin(GL_LINE_STRIP);
 
@@ -879,54 +886,67 @@ void GraphicsRenderer::drawMFCC() {
 		return;
 	}
 
-	// If in mapped mode, render to FBO and return (don't draw to screen)
-	if (mMFCCMapped && mMFCCFbo) {
-		createMFCCTexture();
-		return;
-	}
+	// Disable depth testing for 2D overlay
+	gl::ScopedDepth scopedDepth(false);
 
-	// Draw MFCC as bar chart in 2D overlay (top right corner)
+	// Draw MFCC as horizontal bars - full width
 	gl::ScopedMatrices scopedMatrices;
 	gl::setMatricesWindow(getWindowSize());
 
-	float chartWidth = 400.0f;
-	float chartHeight = 200.0f;
-	float margin = 40.0f;
-	float xStart = getWindowWidth() - chartWidth - margin;
-	float yStart = margin;  // Top instead of bottom
+	float chartWidth = getWindowWidth();
+	float chartHeight = 400.0f;
+	float xStart = 0.0f;
+	float yStart = getWindowHeight() / 2.0f - chartHeight / 2.0f;
 
-	// Background
 	gl::ScopedColor colorScope;
-	gl::color(0.0f, 0.0f, 0.0f, 0.7f);
-	gl::drawSolidRect(Rectf(xStart, yStart, xStart + chartWidth, yStart + chartHeight));
 
-	// Border
-	gl::color(0.7f, 0.3f, 0.7f, 1.0f);
-	gl::drawStrokedRect(Rectf(xStart, yStart, xStart + chartWidth, yStart + chartHeight));
+	int numCoeffs = mMFCCCoeffs.size();  // Should be 13
+	float lineSpacing = chartHeight / (float)numCoeffs;
 
-	// MFCC bars
-	int numCoeffs = mMFCCCoeffs.size();
-	float barWidth = chartWidth / (float)numCoeffs;
-	float maxVal = *std::max_element(mMFCCCoeffs.begin(), mMFCCCoeffs.end());
-	maxVal = std::max(maxVal, 0.01f);  // Avoid division by zero
+	// Draw 13 horizontal bars (one per MFCC coefficient)
+	float centerX = chartWidth / 2.0f;
 
-	for (int i = 0; i < numCoeffs; i++) {
-		float normalized = std::abs(mMFCCCoeffs[i]) / maxVal;
-		normalized = std::min(normalized, 1.0f);
+	for (int coeffIdx = 0; coeffIdx < numCoeffs; coeffIdx++) {
+		float centerY = yStart + (coeffIdx + 0.5f) * lineSpacing;
 
-		float barHeight = normalized * chartHeight * 0.9f;
-		float x = xStart + i * barWidth;
-		float y = yStart + chartHeight - barHeight;
+		// Get raw value
+		float value = std::abs(mMFCCCoeffs[coeffIdx]);
 
-		// Color gradient based on coefficient index
-		float hue = i / (float)numCoeffs;
-		gl::color(ColorAf(CM_HSV, hue, 0.8f, 0.9f));
-		gl::drawSolidRect(Rectf(x + 1, y, x + barWidth - 1, yStart + chartHeight));
+		// Width: INVERTED - higher value = shorter width
+		float normalizedValue = 1.0f - std::min(value * 10.0f, 1.0f);  // Invert and scale
+		float halfWidth = normalizedValue * (chartWidth / 2.0f);
+
+		// Height: varies with value (higher value = taller rectangle)
+		float heightScale = std::min(value * 20.0f, 1.0f);  // Scale for height
+		float rectHeight = heightScale * lineSpacing * 0.8f;  // Max 80% of spacing
+
+		// Alpha: varies with value (higher value = more opaque)
+		float alpha = 0.3f + (heightScale * 0.7f);  // Range from 0.3 to 1.0
+
+		// Color gradient: configurable hue range
+		float hue = mMFCCHueStart + (coeffIdx / (float)numCoeffs) * mMFCCHueRange;
+		gl::color(ColorAf(CM_HSV, hue, 0.9f, 1.0f, alpha));
+
+		// Draw centered rectangle
+		Rectf rect(centerX - halfWidth, centerY - rectHeight / 2.0f,
+		           centerX + halfWidth, centerY + rectHeight / 2.0f);
+		gl::drawSolidRect(rect);
 	}
 }
 
 void GraphicsRenderer::createWaveformTexture() {
+	static bool loggedOnce = false;
+	if (!loggedOnce) {
+		console() << "createWaveformTexture called: mWaveformFbo=" << (mWaveformFbo ? "valid" : "null") << std::endl;
+		loggedOnce = true;
+	}
+
 	if (!mWaveformFbo) {
+		static bool loggedNoFbo = false;
+		if (!loggedNoFbo) {
+			console() << "createWaveformTexture: No FBO available!" << std::endl;
+			loggedNoFbo = true;
+		}
 		return;
 	}
 
@@ -2197,17 +2217,9 @@ void GraphicsRenderer::endDraw() {
 			drawCodePanel();
 	}
 
-	// Draw audio visualizations (2D overlays or 3D mapped)
-	drawWaveform();  // Handles both 2D overlay and FBO rendering
-	drawMFCC();      // Handles both 2D overlay and FBO rendering
-
-	// Map audio visualizations onto 3D geometry if enabled
-	if (mShowWaveform && mWaveformMapped) {
-		mapWaveform();
-	}
-	if (mShowMFCC && mMFCCMapped) {
-		mapMFCC();
-	}
+	// Draw audio visualizations (2D overlays)
+	drawWaveform();
+	drawMFCC();
 
 	// Apply post-processing effects if enabled
 	if (mCurrentEffect != EFFECT_NONE && mFbo) {
@@ -2288,94 +2300,6 @@ void GraphicsRenderer::mapCodePanel() {
 	gl::popMatrices();
 
 	codePanel.unbind();
-}
-
-void GraphicsRenderer::mapWaveform() {
-	// Debug logging
-	static bool loggedOnce = false;
-	if (!loggedOnce) {
-		console() << "mapWaveform called: mWaveformTexture=" << (mWaveformTexture ? "valid" : "null")
-		          << " hx=" << hx << std::endl;
-		loggedOnce = true;
-	}
-
-	// Check if we have a valid texture
-	if (!mWaveformTexture) {
-		static bool loggedNoTexture = false;
-		if (!loggedNoTexture) {
-			console() << "mapWaveform: No texture available!" << std::endl;
-			loggedNoTexture = true;
-		}
-		return;
-	}
-
-	// Disable depth testing so texture is always visible
-	gl::ScopedDepth scopedDepth(false);
-	gl::enableAlphaBlending();
-	gl::color(1.0f, 1.0f, 1.0f, 1.0f);
-
-	// Use hx if available, otherwise use a default size
-	float size = (hx > 0.0f) ? hx * 2 : 50.0f;
-
-	static bool loggedSize = false;
-	if (!loggedSize) {
-		console() << "mapWaveform: drawing with size=" << size << std::endl;
-		loggedSize = true;
-	}
-
-	Rectf rect = Rectf(-size/2, -size/2, size/2, size/2);
-
-	// Draw waveform texture on front and back faces only
-	gl::pushMatrices();
-
-	// Front face (Z+)
-	gl::pushMatrices();
-	gl::translate(0.0f, 0.0f, size/2);
-	gl::draw(mWaveformTexture, rect);
-	gl::popMatrices();
-
-	// Back face (Z-)
-	gl::pushMatrices();
-	gl::translate(0.0f, 0.0f, -size/2);
-	gl::rotate(glm::radians(180.0f), 0.0f, 1.0f, 0.0f);
-	gl::draw(mWaveformTexture, rect);
-	gl::popMatrices();
-
-	gl::popMatrices();
-}
-
-void GraphicsRenderer::mapMFCC() {
-	// Check if we have a valid texture
-	if (!mMFCCTexture) {
-		return;
-	}
-
-	// Disable depth testing so texture is always visible
-	gl::ScopedDepth scopedDepth(false);
-	gl::enableAlphaBlending();
-	gl::color(1.0f, 1.0f, 1.0f, 1.0f);
-
-	// Use hx if available, otherwise use a default size
-	float size = (hx > 0.0f) ? hx * 2 : 50.0f;
-	Rectf rect = Rectf(-size/2, -size/2, size/2, size/2);
-
-	// Draw MFCC texture on front and back faces only
-	gl::pushMatrices();
-
-	// Front face (Z+)
-	gl::pushMatrices();
-	gl::translate(0.0f, 0.0f, size/2);
-	gl::draw(mMFCCTexture, rect);
-	gl::popMatrices();
-
-	// Back face (Z-)
-	gl::pushMatrices();
-	gl::translate(0.0f, 0.0f, -size/2);
-	gl::rotate(glm::radians(180.0f), 0.0f, 1.0f, 0.0f);
-	gl::draw(mMFCCTexture, rect);
-	gl::popMatrices();
-
-	gl::popMatrices();
 }
 
 void GraphicsRenderer::drawBoids() {

@@ -105,15 +105,22 @@ public:
 		mAudioInputEnabled = false;
 		mShowWaveform = false;
 		mShowMFCC = false;
-		mWaveformMapped = false;
-		mMFCCMapped = false;
 		mWaveformBufferSize = 1024;  // ~23ms at 44.1kHz
 		mWaveformWritePos = 0;
 		mWaveformBuffer.resize(mWaveformBufferSize, 0.0f);
 		mMFCCCoeffs.resize(13, 0.0f);  // Standard 13 MFCC coefficients
+		mMFCCHistorySize = 1024;  // Same as waveform for consistency
+		mMFCCWritePos = 0;
+		mMFCCHistory.resize(13);  // 13 coefficients
+		for (int i = 0; i < 13; i++) {
+			mMFCCHistory[i].resize(mMFCCHistorySize, 0.0f);
+		}
 		mUseOutputDevice = false;
 		mCurrentEffect = EFFECT_NONE;
 		mEffectParams = {0.5f, 0.5f, 0.0f, 1.0f};  // Default params
+		mWaveformColor = vec3(0.2f, 1.0f, 0.8f);  // Cyan
+		mMFCCHueStart = 0.7f;  // Purple
+		mMFCCHueRange = 0.3f;  // Range to cyan
 	};
 	
 	~GraphicsRenderer() {
@@ -235,19 +242,23 @@ public:
 	// Audio visualization
 	bool mShowWaveform;
 	bool mShowMFCC;
-	bool mWaveformMapped;  // Toggle between 2D overlay vs 3D mapped mode
-	bool mMFCCMapped;      // Toggle between 2D overlay vs 3D mapped mode
 	std::vector<float> mWaveformBuffer;  // Ring buffer for waveform display
 	int mWaveformBufferSize;
 	int mWaveformWritePos;
-	std::vector<float> mMFCCCoeffs;      // MFCC coefficients for display
+	std::vector<float> mMFCCCoeffs;      // Current MFCC coefficients
+	std::vector<std::vector<float>> mMFCCHistory;  // History buffer for each MFCC coefficient (13 x bufferSize)
+	int mMFCCHistorySize;
+	int mMFCCWritePos;
 	void drawWaveform();                  // Draw oscilloscope-style waveform
 	void drawMFCC();                      // Draw MFCC bar chart
 	void computeMFCCs();                  // Compute MFCCs from FFT data
 	void createWaveformTexture();         // Create FBO texture for waveform
 	void createMFCCTexture();             // Create FBO texture for MFCC
-	void mapWaveform();                   // Map waveform texture onto 3D geometry
-	void mapMFCC();                       // Map MFCC texture onto 3D geometry
+
+	// Audio visualization colors (RGB, controllable via OSC)
+	vec3 mWaveformColor;  // Default: (0.2, 1.0, 0.8) cyan
+	float mMFCCHueStart;  // Default: 0.7 (purple)
+	float mMFCCHueRange;  // Default: 0.3 (range to cyan)
 
 	// Post-processing effects controls (public for OSC access)
 	enum EffectType {

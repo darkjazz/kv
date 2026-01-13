@@ -278,20 +278,30 @@ void OSCMessenger::setUpListener() {
         console() << "MFCC display " << (enable ? "enabled" : "disabled") << " via OSC" << std::endl;
     });
 
-    // Waveform 3D mapping toggle
-    _listener.setListener( "/lambda/audio/waveform/mapped",
+    // Waveform color (RGB floats 0.0-1.0)
+    _listener.setListener( "/lambda/audio/waveform/color",
     [&]( const osc::Message &msg ){
-        bool enable = msg.getArgInt32(0) == 1;
-        _ogl->mWaveformMapped = enable;
-        console() << "Waveform 3D mapping " << (enable ? "enabled" : "disabled") << " via OSC" << std::endl;
+        float r = msg.getArgFloat(0);
+        float g = msg.getArgFloat(1);
+        float b = msg.getArgFloat(2);
+        _ogl->mWaveformColor = vec3(r, g, b);
+        console() << "Waveform color set to RGB(" << r << ", " << g << ", " << b << ")" << std::endl;
     });
 
-    // MFCC 3D mapping toggle
-    _listener.setListener( "/lambda/audio/mfcc/mapped",
+    // MFCC hue start (float 0.0-1.0)
+    _listener.setListener( "/lambda/audio/mfcc/hue/start",
     [&]( const osc::Message &msg ){
-        bool enable = msg.getArgInt32(0) == 1;
-        _ogl->mMFCCMapped = enable;
-        console() << "MFCC 3D mapping " << (enable ? "enabled" : "disabled") << " via OSC" << std::endl;
+        float hue = msg.getArgFloat(0);
+        _ogl->mMFCCHueStart = hue;
+        console() << "MFCC hue start set to " << hue << std::endl;
+    });
+
+    // MFCC hue range (float 0.0-1.0)
+    _listener.setListener( "/lambda/audio/mfcc/hue/range",
+    [&]( const osc::Message &msg ){
+        float range = msg.getArgFloat(0);
+        _ogl->mMFCCHueRange = range;
+        console() << "MFCC hue range set to " << range << std::endl;
     });
 
     // Boid pattern system - matches old lambda app format
