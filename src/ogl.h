@@ -108,6 +108,13 @@ public:
 		mWaveformBufferSize = 1024;  // ~23ms at 44.1kHz
 		mWaveformWritePos = 0;
 		mWaveformBuffer.resize(mWaveformBufferSize, 0.0f);
+		mWaveformHistorySize = 32;  // Number of history frames to keep
+		mWaveformHistoryWritePos = 0;
+		mWaveformRibbonLayers = 12;  // Number of layers to render in 3D
+		mWaveformHistory.resize(mWaveformHistorySize);
+		for (int i = 0; i < mWaveformHistorySize; i++) {
+			mWaveformHistory[i].resize(mWaveformBufferSize, 0.0f);
+		}
 		mMFCCCoeffs.resize(13, 0.0f);  // Standard 13 MFCC coefficients
 		mMFCCHistorySize = 1024;  // Same as waveform for consistency
 		mMFCCWritePos = 0;
@@ -121,6 +128,9 @@ public:
 		mWaveformColor = vec3(0.2f, 1.0f, 0.8f);  // Cyan
 		mMFCCHueStart = 0.7f;  // Purple
 		mMFCCHueRange = 0.3f;  // Range to cyan
+		mWaveformRibbon3D = false;  // Start with 2D mode
+		mRibbonDepthSpacing = 50.0f;  // Depth between ribbon layers
+		mRibbonFadeRate = 0.08f;  // Alpha fade per layer (12 layers = full fade)
 	};
 	
 	~GraphicsRenderer() {
@@ -245,11 +255,16 @@ public:
 	std::vector<float> mWaveformBuffer;  // Ring buffer for waveform display
 	int mWaveformBufferSize;
 	int mWaveformWritePos;
+	std::vector<std::vector<float>> mWaveformHistory;  // History buffer for 3D ribbon effect
+	int mWaveformHistorySize;
+	int mWaveformHistoryWritePos;
+	int mWaveformRibbonLayers;  // Number of layers for 3D ribbon trail
 	std::vector<float> mMFCCCoeffs;      // Current MFCC coefficients
 	std::vector<std::vector<float>> mMFCCHistory;  // History buffer for each MFCC coefficient (13 x bufferSize)
 	int mMFCCHistorySize;
 	int mMFCCWritePos;
 	void drawWaveform();                  // Draw oscilloscope-style waveform
+	void drawWaveformRibbon3D();          // Draw 3D ribbon trail waveform
 	void drawMFCC();                      // Draw MFCC bar chart
 	void computeMFCCs();                  // Compute MFCCs from FFT data
 	void createWaveformTexture();         // Create FBO texture for waveform
@@ -259,6 +274,11 @@ public:
 	vec3 mWaveformColor;  // Default: (0.2, 1.0, 0.8) cyan
 	float mMFCCHueStart;  // Default: 0.7 (purple)
 	float mMFCCHueRange;  // Default: 0.3 (range to cyan)
+
+	// Ribbon trail effect parameters (controllable via OSC)
+	bool mWaveformRibbon3D;     // Toggle 3D ribbon trail effect
+	float mRibbonDepthSpacing;  // Z-depth between layers
+	float mRibbonFadeRate;      // Alpha fade per layer
 
 	// Post-processing effects controls (public for OSC access)
 	enum EffectType {

@@ -288,6 +288,39 @@ void OSCMessenger::setUpListener() {
         console() << "Waveform color set to RGB(" << r << ", " << g << ", " << b << ")" << std::endl;
     });
 
+    // Waveform 3D ribbon mode toggle (int: 0=2D, 1=3D)
+    _listener.setListener( "/lambda/audio/waveform/ribbon",
+    [&]( const osc::Message &msg ){
+        bool enable = msg.getArgInt32(0) == 1;
+        _ogl->mWaveformRibbon3D = enable;
+        console() << "Waveform ribbon 3D mode " << (enable ? "enabled" : "disabled") << " via OSC" << std::endl;
+    });
+
+    // Ribbon trail depth spacing (float, default 50.0)
+    _listener.setListener( "/lambda/audio/waveform/ribbon/depth",
+    [&]( const osc::Message &msg ){
+        float depth = msg.getArgFloat(0);
+        _ogl->mRibbonDepthSpacing = depth;
+        console() << "Ribbon depth spacing set to " << depth << std::endl;
+    });
+
+    // Ribbon trail fade rate (float, default 0.08)
+    _listener.setListener( "/lambda/audio/waveform/ribbon/fade",
+    [&]( const osc::Message &msg ){
+        float fade = msg.getArgFloat(0);
+        _ogl->mRibbonFadeRate = fade;
+        console() << "Ribbon fade rate set to " << fade << std::endl;
+    });
+
+    // Ribbon trail number of layers (int, default 12, max 32)
+    _listener.setListener( "/lambda/audio/waveform/ribbon/layers",
+    [&]( const osc::Message &msg ){
+        int layers = msg.getArgInt32(0);
+        layers = std::max(1, std::min(32, layers));  // Clamp to 1-32
+        _ogl->mWaveformRibbonLayers = layers;
+        console() << "Ribbon layers set to " << layers << std::endl;
+    });
+
     // MFCC hue start (float 0.0-1.0)
     _listener.setListener( "/lambda/audio/mfcc/hue/start",
     [&]( const osc::Message &msg ){

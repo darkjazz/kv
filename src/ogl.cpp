@@ -773,6 +773,10 @@ void GraphicsRenderer::updateAudioFromInput() {
 			mWaveformBuffer[i] = channelData[i];
 		}
 
+		// Save to history buffer for ribbon trail effect
+		mWaveformHistory[mWaveformHistoryWritePos] = mWaveformBuffer;
+		mWaveformHistoryWritePos = (mWaveformHistoryWritePos + 1) % mWaveformHistorySize;
+
 		// Debug output every 60 frames
 		static int waveformDebugCounter = 0;
 		if (++waveformDebugCounter >= 60) {
@@ -845,6 +849,13 @@ void GraphicsRenderer::drawWaveform() {
 		return;
 	}
 
+	// Switch between 2D and 3D modes
+	if (mWaveformRibbon3D) {
+		drawWaveformRibbon3D();
+		return;
+	}
+
+	// Original 2D overlay implementation
 	// Disable depth testing for 2D overlay
 	gl::ScopedDepth scopedDepth(false);
 
@@ -879,6 +890,59 @@ void GraphicsRenderer::drawWaveform() {
 
 	gl::end();
 	glLineWidth(1.0f);  // Reset line width
+}
+
+void GraphicsRenderer::drawWaveformRibbon3D() {
+	if (!mShowWaveform || !mAudioInputEnabled || mWaveformBuffer.empty()) {
+		return;
+	}
+
+	// Enable alpha blending for ribbon trail
+	gl::ScopedBlend scopedBlend(true);
+	gl::ScopedDepth scopedDepth(true, true);  // Enable depth testing and writing
+
+	// Draw in 3D space (use existing camera matrices)
+	// The waveform will appear in world space
+
+	// Use world dimensions (hx is half-width)
+	float waveWidth = hx * 2.0f;  // Match world width
+	float waveHeight = hy * 0.5f;  // Height scale relative to world height
+	float xStart = -hx;  // Start at world left edge
+
+	// Draw multiple layers from history to create ribbon trail
+	int numLayers = std::min(mWaveformRibbonLayers, (int)mWaveformHistorySize);
+
+	for (int layer = numLayers - 1; layer >= 0; layer--) {
+		// Calculate history index for this layer
+		int historyOffset = layer * (mWaveformHistorySize / numLayers);
+		int historyIndex = (mWaveformHistoryWritePos - historyOffset - 1 + mWaveformHistorySize) % mWaveformHistorySize;
+
+		// Calculate alpha fade (older layers are more transparent)
+		float alpha = 1.0f - (layer * mRibbonFadeRate);
+		if (alpha <= 0.0f) continue;
+
+		// Calculate Z depth offset (older layers are further back)
+		float zOffset = -layer * mRibbonDepthSpacing;
+
+		// Set color with alpha
+		gl::ScopedColor colorScope;
+		gl::color(mWaveformColor.x, mWaveformColor.y, mWaveformColor.z, alpha);
+
+		glLineWidth(2.0f);
+		gl::begin(GL_LINE_STRIP);
+
+		// Draw waveform from history buffer
+		const std::vector<float>& historyBuffer = mWaveformHistory[historyIndex];
+		for (int i = 0; i < mWaveformBufferSize; i++) {
+			float x = xStart + (i / (float)mWaveformBufferSize) * waveWidth;
+			float y = historyBuffer[i] * waveHeight;
+			float z = zOffset;
+			gl::vertex(vec3(x, y, z));
+		}
+
+		gl::end();
+		glLineWidth(1.0f);
+	}
 }
 
 void GraphicsRenderer::drawMFCC() {
