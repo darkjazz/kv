@@ -670,35 +670,61 @@ public:
         neighbors[2] = w->rule()->getNeighbor(mutableCell, 17);
         neighbors[3] = w->rule()->getNeighbor(mutableCell, 19);
 
-        // Animation phase based on counter (wraps around maxphase=28)
-        float maxphase = 28.0f;
-        float animPhase = (2.0f * M_PI / maxphase) * (fmod(renderer->counter, maxphase) / maxphase);
+        // Smooth animation - full rotation
+        float maxPhase = 90.0f;
+        float baseAngle = (2.0f * M_PI) * fmod(renderer->counter / maxPhase, 1.0f);
 
-        // Scale factor to match Pattern00's world extent
-        // Use half world scale for appropriate reach
-        float worldScale = (w->sizeX() + w->sizeY() + w->sizeZ()) / 3.0f;
-        float fragSizeScale = worldScale * 0.5f;  // Half world scale
+        // Alternate direction per layer
+        float direction = (z % 2 == 0) ? 1.0f : -1.0f;
+        float angle = baseAngle * direction;
+
+        // Rotation axis varies by layer (cycles through Y, X, Z)
+        int axisType = z % 3;
+        vec3 axis;
+        if (axisType == 0) {
+            axis = vec3(0, 1, 0);  // Y axis
+        } else if (axisType == 1) {
+            axis = vec3(1, 0, 0);  // X axis
+        } else {
+            axis = vec3(0, 0, 1);  // Z axis
+        }
+
+        // Build rotation matrix
+        mat4 rotMat = glm::rotate(mat4(1.0f), angle, axis);
+
+        // Use renderer's half-extents to match actual world scale
+        float hx = renderer->getHalfExtentX();
+        float hy = renderer->getHalfExtentY();
+        float hz = renderer->getHalfExtentZ();
+        float maxRadius = std::min({hx, hy, hz}) * 0.95f;  // 95% of half-extent to stay in bounds
+        float maxZ = static_cast<float>(w->sizeZ() - 1);
 
         // Subtle audio reactivity: high frequencies modulate polygon radius
-        float audioMod = 1.0f + (getAudioBand(renderer, 2) * 0.25f);  // 0-25% boost from highs
+        float audioMod = 1.0f + (getAudioBand(renderer, 2) * 0.15f);  // 0-15% boost from highs
 
         // Calculate vertices and colors for each neighbor in spherical coordinates
         for (int i = 0; i < 4; i++) {
             Cell* neighbor = neighbors[i];
             float neighborState = neighbor->phase;
 
-            // Spherical coordinates with animation
-            float theta = ((2.0f * M_PI) / w->sizeX() * neighbor->x) + animPhase;
-            float phi = ((2.0f * M_PI) / w->sizeY() * neighbor->y) + animPhase;
+            // Base spherical coordinates (no animation)
+            float theta = (2.0f * M_PI) / w->sizeX() * neighbor->x;
+            float phi = (M_PI / w->sizeY() * neighbor->y) - (M_PI * 0.5f);
 
-            // Scale rho to fill world extent like pattern00
-            // Original: rho = z * (fragSizeX * 0.5) + (fragSizeX * state * 0.5)
-            float rho = (neighbor->z * (fragSizeScale * 0.5f) + (fragSizeScale * neighborState * 0.5f)) * audioMod;
+            // Normalize rho: z maps to [0.4, 1.0] of maxRadius for better fill
+            float zNorm = (maxZ > 0) ? (neighbor->z / maxZ) : 0.0f;
+            float rho = maxRadius * (0.4f + 0.55f * zNorm + 0.05f * neighborState) * audioMod;
 
-            // Convert spherical to Cartesian
-            config.polygonVertices[i].x = rho * cos(theta) * cos(phi);
-            config.polygonVertices[i].y = rho * sin(theta) * cos(phi);
-            config.polygonVertices[i].z = rho * sin(phi);
+            // Convert spherical to Cartesian (base position)
+            vec3 basePos(
+                rho * cos(phi) * cos(theta),
+                rho * sin(phi),
+                rho * cos(phi) * sin(theta)
+            );
+
+            // Apply rotation
+            vec3 rotatedPos = vec3(rotMat * vec4(basePos, 1.0f));
+            config.polygonVertices[i] = rotatedPos;
 
             // Per-vertex color based on neighbor state, with full alpha control
             float neighborUnmap = 1.0f - neighborState;

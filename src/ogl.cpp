@@ -768,9 +768,9 @@ void GraphicsRenderer::updateAudioFromInput() {
 		const float* channelData = timeBuffer.getChannel(0);  // Get first channel
 		size_t copySize = std::min(numFrames, (size_t)mWaveformBufferSize);
 
-		// Copy the most recent samples
+		// Copy the most recent samples with gain applied
 		for (size_t i = 0; i < copySize; i++) {
-			mWaveformBuffer[i] = channelData[i];
+			mWaveformBuffer[i] = channelData[i] * mAudioInputGain;
 		}
 
 		// Save to history buffer for ribbon trail effect
@@ -2871,40 +2871,72 @@ void GraphicsRenderer::drawFragment(Cell* cell) {
 					int cellY = static_cast<int>(config.customFloats.at("y"));
 					int cellZ = static_cast<int>(config.customFloats.at("z"));
 
-					// Get neighbor 3
-					Cell* otherCell = ptrWorld->rule()->getNeighbor(currentCell, 3);
+					// Get adjacent neighbor (neighbor 0 = typically adjacent in grid)
+					Cell* otherCell = ptrWorld->rule()->getNeighbor(currentCell, 0);
 					float otherState = otherCell->phase;
 
-					// Animation phase based on counter (wraps around maxphase=28)
-					float maxPhase = 28.0f;
-					float animPhase = (2.0f * M_PI / maxPhase) * (fmod(counter, maxPhase) / maxPhase);
+					// Smooth animation - full rotation over maxPhase cycles
+					float maxPhase = 120.0f;
+					float baseAnimPhase = (2.0f * M_PI) * fmod(counter / maxPhase, 1.0f);
 
-					// Calculate spherical coordinates for current cell
-					float thetaA = ((2.0f * M_PI) / ptrWorld->sizeX() * cellX) + animPhase;
-					float phiA = ((2.0f * M_PI) / ptrWorld->sizeY() * cellY) + animPhase;
-					float rhoA = cellZ * (fragSizeX * 0.5f) + (fragSizeX * unmap);
+					// Alternate rotation direction per layer
+					float direction = (cellZ % 2 == 0) ? 1.0f : -1.0f;
+					float angle = baseAnimPhase * direction;
 
-					// Convert to Cartesian
-					float xL = rhoA * cos(thetaA) * cos(phiA);
-					float yB = rhoA * sin(thetaA) * cos(phiA);
-					float zF = rhoA * sin(phiA);
+					// Base radius per layer - clear separation between Z levels
+					float baseRadius = (cellZ + 1) * fragSizeX * 0.8f;
+					float rhoA = baseRadius + (fragSizeX * 0.3f * unmap);
 
-					// Calculate spherical coordinates for neighbor cell
-					float thetaB = ((2.0f * M_PI) / ptrWorld->sizeX() * otherCell->x) + animPhase;
-					float phiB = ((2.0f * M_PI) / ptrWorld->sizeY() * otherCell->y) + animPhase;
-					float rhoB = cellZ * (fragSizeX * 0.5f) + (fragSizeX * otherState);
+					// Calculate base spherical position (no animation yet)
+					float thetaA = (2.0f * M_PI) / ptrWorld->sizeX() * cellX;
+					float phiA = (M_PI / ptrWorld->sizeY() * cellY) - (M_PI * 0.5f);
 
-					// Convert to Cartesian
-					float xW = rhoB * cos(thetaB) * cos(phiB);
-					float yH = rhoB * sin(thetaB) * cos(phiB);
-					float zD = rhoB * sin(phiB);
+					// Convert to Cartesian (base position)
+					vec3 posA(
+						rhoA * cos(phiA) * cos(thetaA),
+						rhoA * sin(phiA),
+						rhoA * cos(phiA) * sin(thetaA)
+					);
 
-					// Draw points at both positions
-					addPointInstance(vec3(xL, yB, zF), config.color, 4.0f);
-					addPointInstance(vec3(xW, yH, zD), config.color, 4.0f);
+					// Neighbor base position
+					float rhoB = baseRadius + (fragSizeX * 0.3f * otherState);
+					float thetaB = (2.0f * M_PI) / ptrWorld->sizeX() * otherCell->x;
+					float phiB = (M_PI / ptrWorld->sizeY() * otherCell->y) - (M_PI * 0.5f);
 
-					// Draw line connecting them
-					addLineInstance(vec3(xL, yB, zF), vec3(xW, yH, zD), config.color, 1.0f);
+					vec3 posB(
+						rhoB * cos(phiB) * cos(thetaB),
+						rhoB * sin(phiB),
+						rhoB * cos(phiB) * sin(thetaB)
+					);
+
+					// Rotate around different axes based on layer (cycles through X, Y, Z)
+					// Layer 0,3,6...: Y axis | Layer 1,4,7...: X axis | Layer 2,5,8...: Z axis
+					int axisType = cellZ % 3;
+					vec3 axis;
+					if (axisType == 0) {
+						axis = vec3(0, 1, 0);  // Y axis
+					} else if (axisType == 1) {
+						axis = vec3(1, 0, 0);  // X axis
+					} else {
+						axis = vec3(0, 0, 1);  // Z axis
+					}
+
+					// Apply rotation using angle-axis
+					mat4 rotMat = glm::rotate(mat4(1.0f), angle, axis);
+					vec3 rotatedA = vec3(rotMat * vec4(posA, 1.0f));
+					vec3 rotatedB = vec3(rotMat * vec4(posB, 1.0f));
+
+					// Only draw line if neighbor is close (limits line length)
+					float lineDist = glm::distance(rotatedA, rotatedB);
+					float maxLineDist = fragSizeX * 2.5f;
+
+					// Draw point at current position
+					addPointInstance(rotatedA, config.color, 4.0f);
+
+					// Draw line only if neighbor is nearby
+					if (lineDist < maxLineDist && lineDist > 0.01f) {
+						addLineInstance(rotatedA, rotatedB, config.color, 1.0f);
+					}
 				}
 				// Pattern12: Composite sphere + cube + wireframe cube
 				else if (patternId == 12) {

@@ -262,6 +262,14 @@ void OSCMessenger::setUpListener() {
         console() << "Setting audio device to: " << deviceName << std::endl;
     });
 
+    // Audio input gain
+    _listener.setListener( "/lambda/audio/gain",
+    [&]( const osc::Message &msg ){
+        float gain = msg.getArgFloat(0);
+        _ogl->setAudioInputGain(gain);
+        console() << "Audio input gain set to: " << gain << std::endl;
+    });
+
     // Waveform display toggle
     _listener.setListener( "/lambda/audio/waveform",
     [&]( const osc::Message &msg ){

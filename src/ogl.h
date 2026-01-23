@@ -241,9 +241,16 @@ public:
 	void enableAudioInput(bool enable);  // Enable/disable real audio input
 	bool isAudioInputEnabled() const { return mAudioInputEnabled; }
 	void setupAudioFromDevice(const std::string& deviceName);  // Setup from specific device name
+	void setAudioInputGain(float gain) { mAudioInputGain = gain; }
+
+	// World extent getters for patterns
+	float getHalfExtentX() const { return hx; }
+	float getHalfExtentY() const { return hy; }
+	float getHalfExtentZ() const { return hz; }
 
 	// Real audio input system
 	bool mAudioInputEnabled;
+	float mAudioInputGain = 1.0f;
 	bool mUseOutputDevice;
 	audio::InputDeviceNodeRef mAudioInput;
 	audio::MonitorSpectralNodeRef mMonitorSpectralNode;
