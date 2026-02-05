@@ -200,6 +200,27 @@ void GraphicsRenderer::setupOgl () {
 	auto lineVbo = gl::Vbo::create(GL_ARRAY_BUFFER, lineVerts.size() * sizeof(float), lineVerts.data(), GL_STATIC_DRAW);
 	mLineMesh = gl::VboMesh::create(2, GL_LINES, { {lineGeom, lineVbo} });
 
+	// Create FBOs for audio visualization textures
+	try {
+		gl::Fbo::Format format;
+		format.setColorTextureFormat(gl::Texture::Format().internalFormat(GL_RGBA8));
+		format.depthBuffer();  // Add depth buffer for proper 3D rendering
+
+		// Waveform FBO (1920x400 - wide aspect for waveform display)
+		mWaveformFbo = gl::Fbo::create(1920, 400, format);
+		console() << "Waveform FBO created: 1920x400" << std::endl;
+
+		// MFCC FBO (800x400 - narrower aspect for bar chart)
+		mMFCCFbo = gl::Fbo::create(800, 400, format);
+		console() << "MFCC FBO created: 800x400" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error creating audio visualization FBOs: " << e.what() << std::endl;
+	}
+
+	// Initialize post-processing FBOs (including audio visualization FBOs)
+	setupPostProcessing();
+
 }
 
 void GraphicsRenderer::reshape() {
@@ -207,6 +228,334 @@ void GraphicsRenderer::reshape() {
 	mCam.setPerspective(45.0, getWindowAspectRatio(), 0.1f, 2000.0f);
 	gl::setMatrices( mCam );
 
+	// Recreate FBO on window resize if any effect is active
+	if (mCurrentEffect != EFFECT_NONE && mFbo) {
+		setupPostProcessing();
+	}
+
+}
+
+void GraphicsRenderer::setupPostProcessing() {
+	console() << "Setting up post-processing effects..." << std::endl;
+
+	// Create FBO for rendering scene to texture
+	try {
+		gl::Fbo::Format format;
+		format.setSamples(4);  // 4x MSAA
+		format.setColorTextureFormat(gl::Texture::Format().internalFormat(GL_RGBA8));
+		mFbo = gl::Fbo::create(getWindowWidth(), getWindowHeight(), format);
+		console() << "FBO created: " << getWindowWidth() << "x" << getWindowHeight() << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error creating FBO: " << e.what() << std::endl;
+		mCurrentEffect = EFFECT_NONE;
+		return;
+	}
+
+	// Create accumulation FBO for trails effect (no MSAA needed)
+	try {
+		gl::Fbo::Format accumFormat;
+		accumFormat.setColorTextureFormat(gl::Texture::Format().internalFormat(GL_RGBA8));
+		mAccumFbo = gl::Fbo::create(getWindowWidth(), getWindowHeight(), accumFormat);
+		// Clear accumulation buffer initially
+		mAccumFbo->bindFramebuffer();
+		gl::clear(Color(0, 0, 0));
+		mAccumFbo->unbindFramebuffer();
+		console() << "Accumulation FBO created" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error creating accumulation FBO: " << e.what() << std::endl;
+	}
+
+	// Load all effect shaders
+	try {
+		auto vertPath = app::loadAsset("blur.vert");
+		auto fragPath = app::loadAsset("blur.frag");
+		mBlurShader = gl::GlslProg::create(vertPath, fragPath);
+		console() << "Blur shader loaded" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error loading blur shader: " << e.what() << std::endl;
+	}
+
+	try {
+		auto vertPath = app::loadAsset("blur.vert");  // Reuse same vertex shader
+		auto fragPath = app::loadAsset("radial.frag");
+		mRadialShader = gl::GlslProg::create(vertPath, fragPath);
+		console() << "Radial shader loaded" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error loading radial shader: " << e.what() << std::endl;
+	}
+
+	try {
+		auto vertPath = app::loadAsset("blur.vert");  // Reuse same vertex shader
+		auto fragPath = app::loadAsset("motion.frag");
+		mMotionShader = gl::GlslProg::create(vertPath, fragPath);
+		console() << "Motion shader loaded" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error loading motion shader: " << e.what() << std::endl;
+	}
+
+	try {
+		auto vertPath = app::loadAsset("blur.vert");  // Reuse same vertex shader
+		auto fragPath = app::loadAsset("glitch.frag");
+		mGlitchShader = gl::GlslProg::create(vertPath, fragPath);
+		console() << "Glitch shader loaded" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error loading glitch shader: " << e.what() << std::endl;
+	}
+
+	try {
+		auto vertPath = app::loadAsset("blur.vert");  // Reuse same vertex shader
+		auto fragPath = app::loadAsset("glow.frag");
+		mGlowShader = gl::GlslProg::create(vertPath, fragPath);
+		console() << "Glow shader loaded" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error loading glow shader: " << e.what() << std::endl;
+	}
+
+	try {
+		auto vertPath = app::loadAsset("blur.vert");  // Reuse same vertex shader
+		auto fragPath = app::loadAsset("mosaic.frag");
+		mMosaicShader = gl::GlslProg::create(vertPath, fragPath);
+		console() << "Mosaic shader loaded" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error loading mosaic shader: " << e.what() << std::endl;
+	}
+
+	try {
+		auto vertPath = app::loadAsset("blur.vert");  // Reuse same vertex shader
+		auto fragPath = app::loadAsset("trails.frag");
+		mTrailsShader = gl::GlslProg::create(vertPath, fragPath);
+		console() << "Trails shader loaded" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error loading trails shader: " << e.what() << std::endl;
+	}
+
+	// Create fullscreen quad for post-processing (shader will be set dynamically)
+	auto rect = geom::Rect(Rectf(-1, -1, 1, 1));
+	if (mBlurShader) {
+		mFullscreenQuad = gl::Batch::create(rect, mBlurShader);
+	}
+
+	console() << "Post-processing setup complete" << std::endl;
+}
+
+void GraphicsRenderer::setEffect(const std::string& type, bool enabled) {
+	if (!enabled) {
+		mCurrentEffect = EFFECT_NONE;
+		console() << "Effect disabled" << std::endl;
+		return;
+	}
+
+	// Map string to effect type
+	if (type == "blur") {
+		mCurrentEffect = EFFECT_BLUR;
+		// Default blur params: [amount]
+		mEffectParams = {0.5f};
+		console() << "Blur effect enabled (amount: 0.5)" << std::endl;
+	}
+	else if (type == "radial") {
+		mCurrentEffect = EFFECT_RADIAL;
+		// Default radial params: [centerX, centerY, amount, samples]
+		mEffectParams = {0.5f, 0.5f, 0.0f, 12.0f};
+		console() << "Radial blur effect enabled (center: 0.5,0.5 amount: 0.0 samples: 12)" << std::endl;
+	}
+	else if (type == "motion") {
+		mCurrentEffect = EFFECT_MOTION;
+		// Default motion params: [angle, amount, samples]
+		mEffectParams = {0.0f, 0.0f, 12.0f};
+		console() << "Motion blur effect enabled (angle: 0 amount: 0.0 samples: 12)" << std::endl;
+	}
+	else if (type == "glitch") {
+		mCurrentEffect = EFFECT_GLITCH;
+		// Default glitch params: [amount, time, rgbOffset, blockiness]
+		mEffectParams = {0.5f, 0.0f, 1.0f, 1.0f};
+		console() << "Glitch effect enabled (amount: 0.5 rgbOffset: 1.0 blockiness: 1.0)" << std::endl;
+	}
+	else if (type == "glow") {
+		mCurrentEffect = EFFECT_GLOW;
+		// Default glow params: [threshold, intensity, radius]
+		mEffectParams = {0.5f, 1.5f, 3.0f};
+		console() << "Glow effect enabled (threshold: 0.5 intensity: 1.5 radius: 3.0)" << std::endl;
+	}
+	else if (type == "mosaic") {
+		mCurrentEffect = EFFECT_MOSAIC;
+		// Default mosaic params: [blockSize, shape]
+		// shape: 0=square, 1=hexagon, 2=triangle, 3=circle
+		mEffectParams = {16.0f, 0.0f};
+		console() << "Mosaic effect enabled (blockSize: 16, shape: square)" << std::endl;
+	}
+	else if (type == "trails") {
+		mCurrentEffect = EFFECT_TRAILS;
+		// Default trails params: [decay] - how much of previous frame to keep (0.0-1.0)
+		mEffectParams = {0.92f};
+		mTrailsFirstFrame = true;  // Reset first frame flag
+		console() << "Trails effect enabled (decay: 0.92)" << std::endl;
+	}
+	else {
+		console() << "Unknown effect type: " << type << std::endl;
+		mCurrentEffect = EFFECT_NONE;
+	}
+}
+
+void GraphicsRenderer::setEffectParams(const std::vector<float>& params) {
+	mEffectParams = params;
+	console() << "Effect params updated: " << params.size() << " values" << std::endl;
+}
+
+void GraphicsRenderer::applyEffect() {
+	// Unbind FBO and render to screen
+	mFbo->unbindFramebuffer();
+
+	// Clear screen with background color
+	gl::clear(Color(_bgr, _bgg, _bgb));
+
+	// Disable depth test for fullscreen quad
+	gl::ScopedDepth scopedDepth(false);
+
+	// Use identity matrices for fullscreen quad in NDC (-1 to 1)
+	gl::ScopedMatrices scopedMatrices;
+	gl::setMatrices(CameraOrtho(-1, 1, -1, 1, -1, 1));
+
+	// Select shader based on current effect
+	gl::GlslProgRef shader;
+	switch (mCurrentEffect) {
+		case EFFECT_BLUR:
+			shader = mBlurShader;
+			break;
+		case EFFECT_RADIAL:
+			shader = mRadialShader;
+			break;
+		case EFFECT_MOTION:
+			shader = mMotionShader;
+			break;
+		case EFFECT_GLITCH:
+			shader = mGlitchShader;
+			break;
+		case EFFECT_GLOW:
+			shader = mGlowShader;
+			break;
+		case EFFECT_MOSAIC:
+			shader = mMosaicShader;
+			break;
+		case EFFECT_TRAILS:
+			shader = mTrailsShader;
+			break;
+		default:
+			return;  // No effect
+	}
+
+	if (!shader) return;
+
+	// Bind shader and set uniforms
+	gl::ScopedGlslProg scopedShader(shader);
+	shader->uniform("uTexture", 0);
+
+	// Set effect-specific uniforms
+	switch (mCurrentEffect) {
+		case EFFECT_BLUR: {
+			// Blur shader needs texel size for kernel sampling
+			shader->uniform("uTexelSize", vec2(1.0f / getWindowWidth(), 1.0f / getWindowHeight()));
+			// params[0] = amount
+			float amount = mEffectParams.size() > 0 ? mEffectParams[0] : 0.5f;
+			shader->uniform("uBlurAmount", amount);
+			break;
+		}
+		case EFFECT_RADIAL: {
+			// params[0] = centerX, params[1] = centerY, params[2] = amount, params[3] = samples
+			vec4 params(
+				mEffectParams.size() > 0 ? mEffectParams[0] : 0.5f,
+				mEffectParams.size() > 1 ? mEffectParams[1] : 0.5f,
+				mEffectParams.size() > 2 ? mEffectParams[2] : 0.0f,
+				mEffectParams.size() > 3 ? mEffectParams[3] : 12.0f
+			);
+			shader->uniform("uParams", params);
+
+			// Debug output (only every 60 frames to avoid spam)
+			static int frameCounter = 0;
+			if (frameCounter++ % 60 == 0) {
+				console() << "Radial params: center(" << params.x << "," << params.y
+				          << ") amount=" << params.z << " samples=" << params.w << std::endl;
+			}
+			break;
+		}
+		case EFFECT_MOTION: {
+			// params[0] = angle, params[1] = amount, params[2] = samples
+			vec4 params(
+				mEffectParams.size() > 0 ? mEffectParams[0] : 0.0f,
+				mEffectParams.size() > 1 ? mEffectParams[1] : 0.0f,
+				mEffectParams.size() > 2 ? mEffectParams[2] : 12.0f,
+				0.0f
+			);
+			shader->uniform("uParams", params);
+
+			// Debug output (only every 60 frames to avoid spam)
+			static int frameCounter = 0;
+			if (frameCounter++ % 60 == 0) {
+				console() << "Motion params: angle=" << params.x
+				          << " amount=" << params.y << " samples=" << params.z << std::endl;
+			}
+			break;
+		}
+		case EFFECT_GLITCH: {
+			// params[0] = amount, params[1] = time (auto-updated), params[2] = rgbOffset, params[3] = blockiness
+			// Update time parameter automatically
+			if (mEffectParams.size() > 1) {
+				mEffectParams[1] = static_cast<float>(app::getElapsedSeconds());
+			}
+			vec4 params(
+				mEffectParams.size() > 0 ? mEffectParams[0] : 0.5f,
+				mEffectParams.size() > 1 ? mEffectParams[1] : 0.0f,
+				mEffectParams.size() > 2 ? mEffectParams[2] : 1.0f,
+				mEffectParams.size() > 3 ? mEffectParams[3] : 1.0f
+			);
+			shader->uniform("uParams", params);
+			break;
+		}
+		case EFFECT_GLOW: {
+			// params[0] = threshold, params[1] = intensity, params[2] = radius
+			shader->uniform("uTexelSize", vec2(1.0f / getWindowWidth(), 1.0f / getWindowHeight()));
+			float threshold = mEffectParams.size() > 0 ? mEffectParams[0] : 0.5f;
+			float intensity = mEffectParams.size() > 1 ? mEffectParams[1] : 1.5f;
+			float radius = mEffectParams.size() > 2 ? mEffectParams[2] : 3.0f;
+			shader->uniform("uThreshold", threshold);
+			shader->uniform("uIntensity", intensity);
+			shader->uniform("uRadius", radius);
+			break;
+		}
+		case EFFECT_MOSAIC: {
+			// params[0] = blockSize in pixels, params[1] = shape (0=square, 1=hex, 2=tri, 3=circle)
+			float blockSize = mEffectParams.size() > 0 ? mEffectParams[0] : 16.0f;
+			int shape = mEffectParams.size() > 1 ? static_cast<int>(mEffectParams[1]) : 0;
+			shader->uniform("uResolution", vec2(getWindowWidth(), getWindowHeight()));
+			shader->uniform("uBlockSize", blockSize);
+			shader->uniform("uShape", shape);
+			break;
+		}
+		case EFFECT_TRAILS: {
+			// Trails effect is handled in startDraw by fading instead of clearing
+			// Shader just passes through the texture
+			shader->uniform("uTexture", 0);
+			break;
+		}
+		default:
+			break;
+	}
+
+	// Bind FBO texture and draw fullscreen quad
+	gl::ScopedTextureBind scopedTexture(mFbo->getColorTexture(), 0);
+
+	// Create batch on-the-fly with current shader
+	auto rect = geom::Rect(Rectf(-1, -1, 1, 1)).texCoords(vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1));
+	auto batch = gl::Batch::create(rect, shader);
+	batch->draw();
 }
 
 void GraphicsRenderer::updateAudioFeatures() {
@@ -365,6 +714,19 @@ void GraphicsRenderer::setupAudioInput(bool useOutput) {
 void GraphicsRenderer::setupAudioFromDevice(const std::string& deviceName) {
 	auto ctx = audio::Context::master();
 
+	// Clean up existing audio nodes first to avoid deadlock
+	if (mAudioInput) {
+		mAudioInput->disable();
+		mAudioInput->disconnectAll();
+		mAudioInput.reset();
+	}
+	if (mMonitorSpectralNode) {
+		mMonitorSpectralNode->disable();
+		mMonitorSpectralNode->disconnectAll();
+		mMonitorSpectralNode.reset();
+	}
+	mAudioInputEnabled = false;
+
 	// List all available devices
 	console() << "Available audio devices:" << std::endl;
 	auto devices = audio::Device::getDevices();
@@ -397,10 +759,12 @@ void GraphicsRenderer::setupAudioFromDevice(const std::string& deviceName) {
 	mAudioInput = ctx->createInputDeviceNode(targetDevice, format);
 
 	// Create FFT node for spectral analysis
-	auto monitorFormat = audio::MonitorSpectralNode::Format().fftSize(2048).windowSize(1024);
+	// Use window size matching our waveform buffer for better time-domain capture
+	auto monitorFormat = audio::MonitorSpectralNode::Format().fftSize(2048).windowSize(mWaveformBufferSize);
 	mMonitorSpectralNode = ctx->makeNode(new audio::MonitorSpectralNode(monitorFormat));
 
-	// Connect input to FFT
+	// Connect input directly to FFT
+	// We'll capture time-domain samples from the spectral node's buffer
 	mAudioInput >> mMonitorSpectralNode;
 
 	// Enable the input
@@ -424,6 +788,17 @@ void GraphicsRenderer::enableAudioInput(bool enable) {
 void GraphicsRenderer::updateAudioFromInput() {
 	if (!mAudioInputEnabled || !mMonitorSpectralNode) {
 		return;
+	}
+
+	// Check if input is actually enabled and running
+	static int statusCounter = 0;
+	if (++statusCounter >= 120) {  // Every 2 seconds
+		if (mAudioInput) {
+			console() << "Audio input status: enabled=" << mAudioInput->isEnabled()
+			          << " initialized=" << mAudioInput->isInitialized()
+			          << " num channels=" << mAudioInput->getNumChannels() << std::endl;
+		}
+		statusCounter = 0;
 	}
 
 	// Get magnitude spectrum from FFT
@@ -496,6 +871,362 @@ void GraphicsRenderer::updateAudioFromInput() {
 	mAudioLowBand = std::min(1.0f, std::max(0.0f, mAudioLowBand * scale));
 	mAudioMidBand = std::min(1.0f, std::max(0.0f, mAudioMidBand * scale));
 	mAudioHighBand = std::min(1.0f, std::max(0.0f, mAudioHighBand * scale));
+
+	// Capture time-domain waveform from spectral node's input buffer
+	// The MonitorSpectralNode stores the time-domain samples before FFT
+	const audio::Buffer& timeBuffer = mMonitorSpectralNode->getBuffer();
+	size_t numFrames = timeBuffer.getNumFrames();
+
+	if (numFrames > 0) {
+		const float* channelData = timeBuffer.getChannel(0);  // Get first channel
+		size_t copySize = std::min(numFrames, (size_t)mWaveformBufferSize);
+
+		// Copy the most recent samples with gain applied
+		for (size_t i = 0; i < copySize; i++) {
+			mWaveformBuffer[i] = channelData[i] * mAudioInputGain;
+		}
+
+		// Save to history buffer for ribbon trail effect
+		mWaveformHistory[mWaveformHistoryWritePos] = mWaveformBuffer;
+		mWaveformHistoryWritePos = (mWaveformHistoryWritePos + 1) % mWaveformHistorySize;
+
+		// Debug output every 60 frames
+		static int waveformDebugCounter = 0;
+		if (++waveformDebugCounter >= 60) {
+			float maxSample = 0.0f;
+			for (size_t i = 0; i < copySize; i++) {
+				float absSample = std::abs(mWaveformBuffer[i]);
+				if (absSample > maxSample) maxSample = absSample;
+			}
+			console() << "Waveform: " << copySize << " samples, max amplitude: "
+			          << maxSample << " (range: -1 to +1)" << std::endl;
+			waveformDebugCounter = 0;
+		}
+	}
+}
+
+void GraphicsRenderer::computeMFCCs() {
+	if (mMagSpectrum.empty()) {
+		static bool warnedOnce = false;
+		if (!warnedOnce) {
+			console() << "computeMFCCs: mMagSpectrum is empty!" << std::endl;
+			warnedOnce = true;
+		}
+		return;
+	}
+
+	// Simplified MFCC computation from FFT magnitudes
+	// Real MFCCs require: FFT -> Mel filterbank -> log -> DCT
+	// This is a simplified version using energy bands as proxy
+
+	int numBins = mMagSpectrum.size();
+	int numMFCC = mMFCCCoeffs.size();
+
+	// Debug output every 60 frames
+	static int mfccDebugCounter = 0;
+	if (++mfccDebugCounter >= 60) {
+		console() << "computeMFCCs: numBins=" << numBins << " numMFCC=" << numMFCC << std::endl;
+		mfccDebugCounter = 0;
+	}
+
+	// Create mel-scale filter banks (simplified)
+	std::vector<float> melEnergies(numMFCC, 0.0f);
+
+	for (int m = 0; m < numMFCC; m++) {
+		float melStart = m * numBins / (float)numMFCC;
+		float melEnd = (m + 1) * numBins / (float)numMFCC;
+
+		int startBin = (int)melStart;
+		int endBin = std::min((int)melEnd, numBins);
+
+		float energy = 0.0f;
+		for (int k = startBin; k < endBin; k++) {
+			energy += mMagSpectrum[k];
+		}
+
+		melEnergies[m] = log(energy + 1e-10f);  // Log energy
+	}
+
+	// Simple DCT (Discrete Cosine Transform) approximation
+	for (int i = 0; i < numMFCC; i++) {
+		float sum = 0.0f;
+		for (int m = 0; m < numMFCC; m++) {
+			sum += melEnergies[m] * cos(M_PI * i * (m + 0.5f) / numMFCC);
+		}
+		mMFCCCoeffs[i] = sum * 0.1f;  // Scale for display
+	}
+}
+
+void GraphicsRenderer::drawWaveform() {
+	if (!mShowWaveform || !mAudioInputEnabled || mWaveformBuffer.empty()) {
+		return;
+	}
+
+	// Switch between 2D and 3D modes
+	if (mWaveformRibbon3D) {
+		drawWaveformRibbon3D();
+		return;
+	}
+
+	// Original 2D overlay implementation
+	// Disable depth testing for 2D overlay
+	gl::ScopedDepth scopedDepth(false);
+
+	// Draw waveform in 2D overlay - full width, large height
+	gl::ScopedMatrices scopedMatrices;
+	gl::setMatricesWindow(getWindowSize());
+
+	float waveWidth = getWindowWidth();  // Full screen width
+	float waveHeight = 300.0f;  // Height
+	float xStart = 0.0f;  // Full width from left edge
+	float yStart = getWindowHeight() / 2.0f - waveHeight / 2.0f;  // Center vertically
+
+	// Center line for reference
+	gl::ScopedColor colorScope;
+	gl::color(0.3f, 0.3f, 0.3f, 0.5f);
+	float centerY = yStart + waveHeight / 2.0f;
+	gl::drawLine(vec2(xStart, centerY), vec2(xStart + waveWidth, centerY));
+
+	// Waveform - use configured color
+	gl::color(mWaveformColor.x, mWaveformColor.y, mWaveformColor.z, 1.0f);
+	glLineWidth(2.0f);  // Thicker line for visibility
+	gl::begin(GL_LINE_STRIP);
+
+	float yScale = waveHeight / 2.0f * 1.8f;  // 180% of half height for doubled amplitude
+
+	// Draw waveform from linear buffer
+	for (int i = 0; i < mWaveformBufferSize; i++) {
+		float x = xStart + (i / (float)mWaveformBufferSize) * waveWidth;
+		float y = centerY - mWaveformBuffer[i] * yScale;
+		gl::vertex(vec2(x, y));
+	}
+
+	gl::end();
+	glLineWidth(1.0f);  // Reset line width
+}
+
+void GraphicsRenderer::drawWaveformRibbon3D() {
+	if (!mShowWaveform || !mAudioInputEnabled || mWaveformBuffer.empty()) {
+		return;
+	}
+
+	// Enable alpha blending for ribbon trail
+	gl::ScopedBlend scopedBlend(true);
+	gl::ScopedDepth scopedDepth(true, true);  // Enable depth testing and writing
+
+	// Draw in 3D space (use existing camera matrices)
+	// The waveform will appear in world space
+
+	// Use world dimensions (hx is half-width)
+	float waveWidth = hx * 2.0f;  // Match world width
+	float waveHeight = hy * 0.5f;  // Height scale relative to world height
+	float xStart = -hx;  // Start at world left edge
+
+	// Draw multiple layers from history to create ribbon trail
+	int numLayers = std::min(mWaveformRibbonLayers, (int)mWaveformHistorySize);
+
+	for (int layer = numLayers - 1; layer >= 0; layer--) {
+		// Calculate history index for this layer
+		int historyOffset = layer * (mWaveformHistorySize / numLayers);
+		int historyIndex = (mWaveformHistoryWritePos - historyOffset - 1 + mWaveformHistorySize) % mWaveformHistorySize;
+
+		// Calculate alpha fade (older layers are more transparent)
+		float alpha = 1.0f - (layer * mRibbonFadeRate);
+		if (alpha <= 0.0f) continue;
+
+		// Calculate Z depth offset (older layers are further back)
+		float zOffset = -layer * mRibbonDepthSpacing;
+
+		// Set color with alpha
+		gl::ScopedColor colorScope;
+		gl::color(mWaveformColor.x, mWaveformColor.y, mWaveformColor.z, alpha);
+
+		glLineWidth(2.0f);
+		gl::begin(GL_LINE_STRIP);
+
+		// Draw waveform from history buffer
+		const std::vector<float>& historyBuffer = mWaveformHistory[historyIndex];
+		for (int i = 0; i < mWaveformBufferSize; i++) {
+			float x = xStart + (i / (float)mWaveformBufferSize) * waveWidth;
+			float y = historyBuffer[i] * waveHeight;
+			float z = zOffset;
+			gl::vertex(vec3(x, y, z));
+		}
+
+		gl::end();
+		glLineWidth(1.0f);
+	}
+}
+
+void GraphicsRenderer::drawMFCC() {
+	if (!mShowMFCC || !mAudioInputEnabled || mMFCCCoeffs.empty()) {
+		return;
+	}
+
+	// Disable depth testing for 2D overlay
+	gl::ScopedDepth scopedDepth(false);
+
+	// Draw MFCC as horizontal bars - full width
+	gl::ScopedMatrices scopedMatrices;
+	gl::setMatricesWindow(getWindowSize());
+
+	float chartWidth = getWindowWidth();
+	float chartHeight = 400.0f;
+	float xStart = 0.0f;
+	float yStart = getWindowHeight() / 2.0f - chartHeight / 2.0f;
+
+	gl::ScopedColor colorScope;
+
+	int numCoeffs = mMFCCCoeffs.size();  // Should be 13
+	float lineSpacing = chartHeight / (float)numCoeffs;
+
+	// Draw 13 horizontal bars (one per MFCC coefficient)
+	float centerX = chartWidth / 2.0f;
+
+	for (int coeffIdx = 0; coeffIdx < numCoeffs; coeffIdx++) {
+		float centerY = yStart + (coeffIdx + 0.5f) * lineSpacing;
+
+		// Get raw value
+		float value = std::abs(mMFCCCoeffs[coeffIdx]);
+
+		// Width: INVERTED - higher value = shorter width
+		float normalizedValue = 1.0f - std::min(value * 10.0f, 1.0f);  // Invert and scale
+		float halfWidth = normalizedValue * (chartWidth / 2.0f);
+
+		// Height: varies with value (higher value = taller rectangle)
+		float heightScale = std::min(value * 20.0f, 1.0f);  // Scale for height
+		float rectHeight = heightScale * lineSpacing * 0.8f;  // Max 80% of spacing
+
+		// Alpha: varies with value (higher value = more opaque)
+		float alpha = 0.3f + (heightScale * 0.7f);  // Range from 0.3 to 1.0
+
+		// Color gradient: configurable hue range
+		float hue = mMFCCHueStart + (coeffIdx / (float)numCoeffs) * mMFCCHueRange;
+		gl::color(ColorAf(CM_HSV, hue, 0.9f, 1.0f, alpha));
+
+		// Draw centered rectangle
+		Rectf rect(centerX - halfWidth, centerY - rectHeight / 2.0f,
+		           centerX + halfWidth, centerY + rectHeight / 2.0f);
+		gl::drawSolidRect(rect);
+	}
+}
+
+void GraphicsRenderer::createWaveformTexture() {
+	static bool loggedOnce = false;
+	if (!loggedOnce) {
+		console() << "createWaveformTexture called: mWaveformFbo=" << (mWaveformFbo ? "valid" : "null") << std::endl;
+		loggedOnce = true;
+	}
+
+	if (!mWaveformFbo) {
+		static bool loggedNoFbo = false;
+		if (!loggedNoFbo) {
+			console() << "createWaveformTexture: No FBO available!" << std::endl;
+			loggedNoFbo = true;
+		}
+		return;
+	}
+
+	// Save current state
+	gl::ScopedFramebuffer fboScope(mWaveformFbo);
+	gl::ScopedViewport viewportScope(ivec2(0), mWaveformFbo->getSize());
+	gl::ScopedMatrices matrixScope;
+
+	// Set up orthographic projection for FBO
+	gl::setMatricesWindow(mWaveformFbo->getSize());
+
+	// Clear FBO with transparent black
+	gl::clear(ColorA(0.0f, 0.0f, 0.0f, 0.0f));
+
+	// Draw waveform to FBO (no margins - use full FBO size)
+	float waveWidth = (float)mWaveformFbo->getWidth();
+	float waveHeight = (float)mWaveformFbo->getHeight();
+
+	// Background - semi-transparent black
+	gl::ScopedColor colorScope;
+	gl::color(0.0f, 0.0f, 0.0f, 0.6f);
+	gl::drawSolidRect(Rectf(0, 0, waveWidth, waveHeight));
+
+	// Center line
+	gl::color(0.2f, 0.2f, 0.2f, 0.8f);
+	float centerY = waveHeight / 2.0f;
+	gl::drawLine(vec2(0, centerY), vec2(waveWidth, centerY));
+
+	// Waveform - bright green
+	gl::color(0.0f, 1.0f, 0.0f, 1.0f);
+	glLineWidth(2.0f);
+	gl::begin(GL_LINE_STRIP);
+
+	float yScale = waveHeight / 2.0f * 0.9f;
+
+	for (int i = 0; i < mWaveformBufferSize; i++) {
+		float x = (i / (float)mWaveformBufferSize) * waveWidth;
+		float y = centerY - mWaveformBuffer[i] * yScale;
+		gl::vertex(vec2(x, y));
+	}
+
+	gl::end();
+	glLineWidth(1.0f);
+
+	// Border
+	gl::color(0.2f, 0.8f, 0.2f, 0.8f);
+	gl::drawStrokedRect(Rectf(0, 0, waveWidth, waveHeight));
+
+	// Store texture reference for mapping
+	mWaveformTexture = mWaveformFbo->getColorTexture();
+}
+
+void GraphicsRenderer::createMFCCTexture() {
+	if (!mMFCCFbo) {
+		return;
+	}
+
+	// Save current state
+	gl::ScopedFramebuffer fboScope(mMFCCFbo);
+	gl::ScopedViewport viewportScope(ivec2(0), mMFCCFbo->getSize());
+	gl::ScopedMatrices matrixScope;
+
+	// Set up orthographic projection for FBO
+	gl::setMatricesWindow(mMFCCFbo->getSize());
+
+	// Clear FBO with transparent black
+	gl::clear(ColorA(0.0f, 0.0f, 0.0f, 0.0f));
+
+	// Draw MFCC to FBO (use full FBO size)
+	float chartWidth = (float)mMFCCFbo->getWidth();
+	float chartHeight = (float)mMFCCFbo->getHeight();
+
+	// Background
+	gl::ScopedColor colorScope;
+	gl::color(0.0f, 0.0f, 0.0f, 0.7f);
+	gl::drawSolidRect(Rectf(0, 0, chartWidth, chartHeight));
+
+	// Border
+	gl::color(0.7f, 0.3f, 0.7f, 1.0f);
+	gl::drawStrokedRect(Rectf(0, 0, chartWidth, chartHeight));
+
+	// MFCC bars
+	int numCoeffs = mMFCCCoeffs.size();
+	float barWidth = chartWidth / (float)numCoeffs;
+	float maxVal = *std::max_element(mMFCCCoeffs.begin(), mMFCCCoeffs.end());
+	maxVal = std::max(maxVal, 0.01f);
+
+	for (int i = 0; i < numCoeffs; i++) {
+		float normalized = std::abs(mMFCCCoeffs[i]) / maxVal;
+		normalized = std::min(normalized, 1.0f);
+
+		float barHeight = normalized * chartHeight * 0.9f;
+		float x = i * barWidth;
+		float y = chartHeight - barHeight;
+
+		// Color gradient based on coefficient index
+		float hue = i / (float)numCoeffs;
+		gl::color(ColorAf(CM_HSV, hue, 0.8f, 0.9f));
+		gl::drawSolidRect(Rectf(x + 1, y, x + barWidth - 1, chartHeight));
+	}
+
+	// Store texture reference for mapping
+	mMFCCTexture = mMFCCFbo->getColorTexture();
 }
 
 void GraphicsRenderer::update() {
@@ -520,6 +1251,7 @@ void GraphicsRenderer::update() {
 	// Update audio features from either real audio input or SOM BMU
 	if (mAudioInputEnabled) {
 		updateAudioFromInput();
+		computeMFCCs();  // Compute MFCCs from FFT data
 	} else {
 		updateAudioFeatures();
 	}
@@ -706,6 +1438,63 @@ void GraphicsRenderer::startDraw() {
     glEnable(GL_LINE_SMOOTH);
     mGrid = gl::VertBatch::create( GL_LINES );
     mGrid->begin( GL_LINES );
+
+	// Bind FBO if any effect is enabled
+	if (mCurrentEffect != EFFECT_NONE) {
+		// Create FBO if it doesn't exist yet
+		if (!mFbo) {
+			setupPostProcessing();
+		}
+		if (mFbo) {
+			mFbo->bindFramebuffer();
+
+			// For trails effect, fade existing content instead of clearing
+			if (mCurrentEffect == EFFECT_TRAILS) {
+				// On first frame, do a full clear to initialize
+				if (mTrailsFirstFrame) {
+					gl::clear(Color(_bgr, _bgg, _bgb));
+					mTrailsFirstFrame = false;
+				}
+				else {
+					float decay = mEffectParams.size() > 0 ? mEffectParams[0] : 0.92f;
+					// Clamp decay to reasonable range
+					decay = std::max(0.5f, std::min(0.99f, decay));
+					float fadeAlpha = 1.0f - decay;  // How much to fade each frame
+
+					// Clear depth buffer but not color
+					glClear(GL_DEPTH_BUFFER_BIT);
+
+					// Save current state
+					gl::pushMatrices();
+					gl::setMatricesWindow(getWindowSize());
+
+					// Disable depth test/write for the fade quad
+					glDisable(GL_DEPTH_TEST);
+					glDepthMask(GL_FALSE);
+
+					// Enable blending for fade
+					glEnable(GL_BLEND);
+					glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+					// Draw semi-transparent background quad to fade previous frame
+					gl::color(ColorA(_bgr, _bgg, _bgb, fadeAlpha));
+					gl::drawSolidRect(Rectf(0, 0, getWindowWidth(), getWindowHeight()));
+
+					// Restore state completely
+					gl::color(1, 1, 1, 1);
+					glDisable(GL_BLEND);  // Disable blending so patterns render normally
+					glDepthMask(GL_TRUE);
+					glEnable(GL_DEPTH_TEST);
+
+					gl::popMatrices();
+				}
+			}
+			else {
+				// Normal clear for other effects
+				gl::clear(Color(_bgr, _bgg, _bgb));
+			}
+		}
+	}
 
 	// Clear instance data for this frame
 	clearInstanceData();
@@ -1649,6 +2438,15 @@ void GraphicsRenderer::endDraw() {
 			drawCodePanel();
 	}
 
+	// Draw audio visualizations (2D overlays)
+	drawWaveform();
+	drawMFCC();
+
+	// Apply post-processing effects if enabled
+	if (mCurrentEffect != EFFECT_NONE && mFbo) {
+		applyEffect();
+	}
+
 	counter++;
 }
 
@@ -2230,40 +3028,72 @@ void GraphicsRenderer::drawFragment(Cell* cell) {
 					int cellY = static_cast<int>(config.customFloats.at("y"));
 					int cellZ = static_cast<int>(config.customFloats.at("z"));
 
-					// Get neighbor 3
-					Cell* otherCell = ptrWorld->rule()->getNeighbor(currentCell, 3);
+					// Get adjacent neighbor (neighbor 0 = typically adjacent in grid)
+					Cell* otherCell = ptrWorld->rule()->getNeighbor(currentCell, 0);
 					float otherState = otherCell->phase;
 
-					// Animation phase based on counter (wraps around maxphase=28)
-					float maxPhase = 28.0f;
-					float animPhase = (2.0f * M_PI / maxPhase) * (fmod(counter, maxPhase) / maxPhase);
+					// Smooth animation - full rotation over maxPhase cycles
+					float maxPhase = 120.0f;
+					float baseAnimPhase = (2.0f * M_PI) * fmod(counter / maxPhase, 1.0f);
 
-					// Calculate spherical coordinates for current cell
-					float thetaA = ((2.0f * M_PI) / ptrWorld->sizeX() * cellX) + animPhase;
-					float phiA = ((2.0f * M_PI) / ptrWorld->sizeY() * cellY) + animPhase;
-					float rhoA = cellZ * (fragSizeX * 0.5f) + (fragSizeX * unmap);
+					// Alternate rotation direction per layer
+					float direction = (cellZ % 2 == 0) ? 1.0f : -1.0f;
+					float angle = baseAnimPhase * direction;
 
-					// Convert to Cartesian
-					float xL = rhoA * cos(thetaA) * cos(phiA);
-					float yB = rhoA * sin(thetaA) * cos(phiA);
-					float zF = rhoA * sin(phiA);
+					// Base radius per layer - clear separation between Z levels
+					float baseRadius = (cellZ + 1) * fragSizeX * 0.8f;
+					float rhoA = baseRadius + (fragSizeX * 0.3f * unmap);
 
-					// Calculate spherical coordinates for neighbor cell
-					float thetaB = ((2.0f * M_PI) / ptrWorld->sizeX() * otherCell->x) + animPhase;
-					float phiB = ((2.0f * M_PI) / ptrWorld->sizeY() * otherCell->y) + animPhase;
-					float rhoB = cellZ * (fragSizeX * 0.5f) + (fragSizeX * otherState);
+					// Calculate base spherical position (no animation yet)
+					float thetaA = (2.0f * M_PI) / ptrWorld->sizeX() * cellX;
+					float phiA = (M_PI / ptrWorld->sizeY() * cellY) - (M_PI * 0.5f);
 
-					// Convert to Cartesian
-					float xW = rhoB * cos(thetaB) * cos(phiB);
-					float yH = rhoB * sin(thetaB) * cos(phiB);
-					float zD = rhoB * sin(phiB);
+					// Convert to Cartesian (base position)
+					vec3 posA(
+						rhoA * cos(phiA) * cos(thetaA),
+						rhoA * sin(phiA),
+						rhoA * cos(phiA) * sin(thetaA)
+					);
 
-					// Draw points at both positions
-					addPointInstance(vec3(xL, yB, zF), config.color, 4.0f);
-					addPointInstance(vec3(xW, yH, zD), config.color, 4.0f);
+					// Neighbor base position
+					float rhoB = baseRadius + (fragSizeX * 0.3f * otherState);
+					float thetaB = (2.0f * M_PI) / ptrWorld->sizeX() * otherCell->x;
+					float phiB = (M_PI / ptrWorld->sizeY() * otherCell->y) - (M_PI * 0.5f);
 
-					// Draw line connecting them
-					addLineInstance(vec3(xL, yB, zF), vec3(xW, yH, zD), config.color, 1.0f);
+					vec3 posB(
+						rhoB * cos(phiB) * cos(thetaB),
+						rhoB * sin(phiB),
+						rhoB * cos(phiB) * sin(thetaB)
+					);
+
+					// Rotate around different axes based on layer (cycles through X, Y, Z)
+					// Layer 0,3,6...: Y axis | Layer 1,4,7...: X axis | Layer 2,5,8...: Z axis
+					int axisType = cellZ % 3;
+					vec3 axis;
+					if (axisType == 0) {
+						axis = vec3(0, 1, 0);  // Y axis
+					} else if (axisType == 1) {
+						axis = vec3(1, 0, 0);  // X axis
+					} else {
+						axis = vec3(0, 0, 1);  // Z axis
+					}
+
+					// Apply rotation using angle-axis
+					mat4 rotMat = glm::rotate(mat4(1.0f), angle, axis);
+					vec3 rotatedA = vec3(rotMat * vec4(posA, 1.0f));
+					vec3 rotatedB = vec3(rotMat * vec4(posB, 1.0f));
+
+					// Only draw line if neighbor is close (limits line length)
+					float lineDist = glm::distance(rotatedA, rotatedB);
+					float maxLineDist = fragSizeX * 2.5f;
+
+					// Draw point at current position
+					addPointInstance(rotatedA, config.color, 4.0f);
+
+					// Draw line only if neighbor is nearby
+					if (lineDist < maxLineDist && lineDist > 0.01f) {
+						addLineInstance(rotatedA, rotatedB, config.color, 1.0f);
+					}
 				}
 				// Pattern12: Composite sphere + cube + wireframe cube
 				else if (patternId == 12) {

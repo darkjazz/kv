@@ -262,6 +262,89 @@ void OSCMessenger::setUpListener() {
         console() << "Setting audio device to: " << deviceName << std::endl;
     });
 
+    // Audio input gain
+    _listener.setListener( "/lambda/audio/gain",
+    [&]( const osc::Message &msg ){
+        float gain = msg.getArgFloat(0);
+        _ogl->setAudioInputGain(gain);
+        console() << "Audio input gain set to: " << gain << std::endl;
+    });
+
+    // Waveform display toggle
+    _listener.setListener( "/lambda/audio/waveform",
+    [&]( const osc::Message &msg ){
+        bool enable = msg.getArgInt32(0) == 1;
+        _ogl->mShowWaveform = enable;
+        console() << "Waveform display " << (enable ? "enabled" : "disabled") << " via OSC" << std::endl;
+    });
+
+    // MFCC display toggle
+    _listener.setListener( "/lambda/audio/mfcc",
+    [&]( const osc::Message &msg ){
+        bool enable = msg.getArgInt32(0) == 1;
+        _ogl->mShowMFCC = enable;
+        console() << "MFCC display " << (enable ? "enabled" : "disabled") << " via OSC" << std::endl;
+    });
+
+    // Waveform color (RGB floats 0.0-1.0)
+    _listener.setListener( "/lambda/audio/waveform/color",
+    [&]( const osc::Message &msg ){
+        float r = msg.getArgFloat(0);
+        float g = msg.getArgFloat(1);
+        float b = msg.getArgFloat(2);
+        _ogl->mWaveformColor = vec3(r, g, b);
+        console() << "Waveform color set to RGB(" << r << ", " << g << ", " << b << ")" << std::endl;
+    });
+
+    // Waveform 3D ribbon mode toggle (int: 0=2D, 1=3D)
+    _listener.setListener( "/lambda/audio/waveform/ribbon",
+    [&]( const osc::Message &msg ){
+        bool enable = msg.getArgInt32(0) == 1;
+        _ogl->mWaveformRibbon3D = enable;
+        console() << "Waveform ribbon 3D mode " << (enable ? "enabled" : "disabled") << " via OSC" << std::endl;
+    });
+
+    // Ribbon trail depth spacing (float, default 50.0)
+    _listener.setListener( "/lambda/audio/waveform/ribbon/depth",
+    [&]( const osc::Message &msg ){
+        float depth = msg.getArgFloat(0);
+        _ogl->mRibbonDepthSpacing = depth;
+        console() << "Ribbon depth spacing set to " << depth << std::endl;
+    });
+
+    // Ribbon trail fade rate (float, default 0.08)
+    _listener.setListener( "/lambda/audio/waveform/ribbon/fade",
+    [&]( const osc::Message &msg ){
+        float fade = msg.getArgFloat(0);
+        _ogl->mRibbonFadeRate = fade;
+        console() << "Ribbon fade rate set to " << fade << std::endl;
+    });
+
+    // Ribbon trail number of layers (int, default 12, max 32)
+    _listener.setListener( "/lambda/audio/waveform/ribbon/layers",
+    [&]( const osc::Message &msg ){
+        int layers = msg.getArgInt32(0);
+        layers = std::max(1, std::min(32, layers));  // Clamp to 1-32
+        _ogl->mWaveformRibbonLayers = layers;
+        console() << "Ribbon layers set to " << layers << std::endl;
+    });
+
+    // MFCC hue start (float 0.0-1.0)
+    _listener.setListener( "/lambda/audio/mfcc/hue/start",
+    [&]( const osc::Message &msg ){
+        float hue = msg.getArgFloat(0);
+        _ogl->mMFCCHueStart = hue;
+        console() << "MFCC hue start set to " << hue << std::endl;
+    });
+
+    // MFCC hue range (float 0.0-1.0)
+    _listener.setListener( "/lambda/audio/mfcc/hue/range",
+    [&]( const osc::Message &msg ){
+        float range = msg.getArgFloat(0);
+        _ogl->mMFCCHueRange = range;
+        console() << "MFCC hue range set to " << range << std::endl;
+    });
+
     // Boid pattern system - matches old lambda app format
     _listener.setListener( "/lambda/graphics/boidpattern",
     [&]( const osc::Message &msg ){
@@ -390,6 +473,30 @@ void OSCMessenger::setUpListener() {
     _listener.setListener( "/lambda/livecode/codefont",
     [&]( const osc::Message &msg ){
         _ogl->codePanel.setCodeFont(msg.getArgString(0), msg.getArgInt32(1));
+    });
+    _listener.setListener( "/lambda/efx/enable",
+    [&]( const osc::Message &msg ){
+        std::string type = msg.getArgString(0);
+        bool enabled = msg.getArgInt32(1) == 1;
+        _ogl->setEffect(type, enabled);
+    });
+    _listener.setListener( "/lambda/efx/params",
+    [&]( const osc::Message &msg ){
+        std::vector<float> params;
+        for (int i = 0; i < msg.getNumArgs(); i++) {
+            // Try to get as float, fall back to int if needed
+            try {
+                if (msg.getArgType(i) == osc::ArgType::INTEGER_32) {
+                    params.push_back(static_cast<float>(msg.getArgInt32(i)));
+                } else {
+                    params.push_back(msg.getArgFloat(i));
+                }
+            }
+            catch (const std::exception& e) {
+                console() << "Error parsing param " << i << ": " << e.what() << std::endl;
+            }
+        }
+        _ogl->setEffectParams(params);
     });
     _listener.setListener( "/lambda/framerate",
     [&]( const osc::Message &msg ){

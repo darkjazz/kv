@@ -103,7 +103,34 @@ public:
 		mAudioMidBand = 0.0f;
 		mAudioHighBand = 0.0f;
 		mAudioInputEnabled = false;
+		mShowWaveform = false;
+		mShowMFCC = false;
+		mWaveformBufferSize = 1024;  // ~23ms at 44.1kHz
+		mWaveformWritePos = 0;
+		mWaveformBuffer.resize(mWaveformBufferSize, 0.0f);
+		mWaveformHistorySize = 32;  // Number of history frames to keep
+		mWaveformHistoryWritePos = 0;
+		mWaveformRibbonLayers = 12;  // Number of layers to render in 3D
+		mWaveformHistory.resize(mWaveformHistorySize);
+		for (int i = 0; i < mWaveformHistorySize; i++) {
+			mWaveformHistory[i].resize(mWaveformBufferSize, 0.0f);
+		}
+		mMFCCCoeffs.resize(13, 0.0f);  // Standard 13 MFCC coefficients
+		mMFCCHistorySize = 1024;  // Same as waveform for consistency
+		mMFCCWritePos = 0;
+		mMFCCHistory.resize(13);  // 13 coefficients
+		for (int i = 0; i < 13; i++) {
+			mMFCCHistory[i].resize(mMFCCHistorySize, 0.0f);
+		}
 		mUseOutputDevice = false;
+		mCurrentEffect = EFFECT_NONE;
+		mEffectParams = {0.5f, 0.5f, 0.0f, 1.0f};  // Default params
+		mWaveformColor = vec3(0.2f, 1.0f, 0.8f);  // Cyan
+		mMFCCHueStart = 0.7f;  // Purple
+		mMFCCHueRange = 0.3f;  // Range to cyan
+		mWaveformRibbon3D = false;  // Start with 2D mode
+		mRibbonDepthSpacing = 50.0f;  // Depth between ribbon layers
+		mRibbonFadeRate = 0.08f;  // Alpha fade per layer (12 layers = full fade)
 	};
 	
 	~GraphicsRenderer() {
@@ -214,13 +241,70 @@ public:
 	void enableAudioInput(bool enable);  // Enable/disable real audio input
 	bool isAudioInputEnabled() const { return mAudioInputEnabled; }
 	void setupAudioFromDevice(const std::string& deviceName);  // Setup from specific device name
+	void setAudioInputGain(float gain) { mAudioInputGain = gain; }
+
+	// World extent getters for patterns
+	float getHalfExtentX() const { return hx; }
+	float getHalfExtentY() const { return hy; }
+	float getHalfExtentZ() const { return hz; }
 
 	// Real audio input system
 	bool mAudioInputEnabled;
+	float mAudioInputGain = 1.0f;
 	bool mUseOutputDevice;
 	audio::InputDeviceNodeRef mAudioInput;
 	audio::MonitorSpectralNodeRef mMonitorSpectralNode;
 	std::vector<float> mMagSpectrum;
+
+	// Audio visualization
+	bool mShowWaveform;
+	bool mShowMFCC;
+	std::vector<float> mWaveformBuffer;  // Ring buffer for waveform display
+	int mWaveformBufferSize;
+	int mWaveformWritePos;
+	std::vector<std::vector<float>> mWaveformHistory;  // History buffer for 3D ribbon effect
+	int mWaveformHistorySize;
+	int mWaveformHistoryWritePos;
+	int mWaveformRibbonLayers;  // Number of layers for 3D ribbon trail
+	std::vector<float> mMFCCCoeffs;      // Current MFCC coefficients
+	std::vector<std::vector<float>> mMFCCHistory;  // History buffer for each MFCC coefficient (13 x bufferSize)
+	int mMFCCHistorySize;
+	int mMFCCWritePos;
+	void drawWaveform();                  // Draw oscilloscope-style waveform
+	void drawWaveformRibbon3D();          // Draw 3D ribbon trail waveform
+	void drawMFCC();                      // Draw MFCC bar chart
+	void computeMFCCs();                  // Compute MFCCs from FFT data
+	void createWaveformTexture();         // Create FBO texture for waveform
+	void createMFCCTexture();             // Create FBO texture for MFCC
+
+	// Audio visualization colors (RGB, controllable via OSC)
+	vec3 mWaveformColor;  // Default: (0.2, 1.0, 0.8) cyan
+	float mMFCCHueStart;  // Default: 0.7 (purple)
+	float mMFCCHueRange;  // Default: 0.3 (range to cyan)
+
+	// Ribbon trail effect parameters (controllable via OSC)
+	bool mWaveformRibbon3D;     // Toggle 3D ribbon trail effect
+	float mRibbonDepthSpacing;  // Z-depth between layers
+	float mRibbonFadeRate;      // Alpha fade per layer
+
+	// Post-processing effects controls (public for OSC access)
+	enum EffectType {
+		EFFECT_NONE = 0,
+		EFFECT_BLUR,
+		EFFECT_RADIAL,
+		EFFECT_MOTION,
+		EFFECT_GLITCH,
+		EFFECT_GLOW,
+		EFFECT_MOSAIC,
+		EFFECT_TRAILS
+	};
+
+	EffectType mCurrentEffect;
+	std::vector<float> mEffectParams;  // Variable parameters per effect
+	bool mTrailsFirstFrame = true;     // Track first frame for trails effect
+
+	void setEffect(const std::string& type, bool enabled);
+	void setEffectParams(const std::vector<float>& params);
 
 private:
 
@@ -326,7 +410,27 @@ private:
 
 	gl::TextureCubeMapRef mCubeMap;   // fxic_* cubemap for Pattern05
 	gl::TextureCubeMapRef mCubeMap2;  // fxp_* cubemap for Pattern13
-	
+
+	// Post-processing FBO and shaders (private)
+	gl::FboRef mFbo;
+	gl::GlslProgRef mBlurShader;
+	gl::GlslProgRef mRadialShader;
+	gl::GlslProgRef mMotionShader;
+	gl::GlslProgRef mGlitchShader;
+	gl::GlslProgRef mGlowShader;
+	gl::GlslProgRef mMosaicShader;
+	gl::GlslProgRef mTrailsShader;
+	gl::FboRef mAccumFbo;  // Accumulation buffer for trails effect
+	gl::BatchRef mFullscreenQuad;
+
+	// Audio visualization FBOs and textures
+	gl::FboRef mWaveformFbo;
+	gl::TextureRef mWaveformTexture;
+	gl::FboRef mMFCCFbo;
+	gl::TextureRef mMFCCTexture;
+
+	void setupPostProcessing();
+	void applyEffect();
 
 	// pattern00 removed - now using new pattern system in pattern.cpp
 	// pattern01 removed - now using new pattern system in pattern.cpp
