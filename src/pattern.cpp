@@ -866,10 +866,9 @@ public:
             0.25f             // Z - thin
         );
 
-        // Y position offset (original: yB = y * (fragSizeX * 0.5) + (fragSizeX * 0.25))
-        // This compresses Y and offsets it
-        config.customFloats["yCompress"] = 0.5f;
-        config.customFloats["yOffset"] = 0.25f;
+        // Y position: use full range (no compression)
+        config.customFloats["yCompress"] = 1.0f;
+        config.customFloats["yOffset"] = 0.5f;  // center offset
 
         return config;
     }

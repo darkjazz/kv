@@ -252,6 +252,21 @@ void GraphicsRenderer::setupPostProcessing() {
 		return;
 	}
 
+	// Create accumulation FBO for trails effect (no MSAA needed)
+	try {
+		gl::Fbo::Format accumFormat;
+		accumFormat.setColorTextureFormat(gl::Texture::Format().internalFormat(GL_RGBA8));
+		mAccumFbo = gl::Fbo::create(getWindowWidth(), getWindowHeight(), accumFormat);
+		// Clear accumulation buffer initially
+		mAccumFbo->bindFramebuffer();
+		gl::clear(Color(0, 0, 0));
+		mAccumFbo->unbindFramebuffer();
+		console() << "Accumulation FBO created" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error creating accumulation FBO: " << e.what() << std::endl;
+	}
+
 	// Load all effect shaders
 	try {
 		auto vertPath = app::loadAsset("blur.vert");
@@ -291,6 +306,36 @@ void GraphicsRenderer::setupPostProcessing() {
 	}
 	catch (const std::exception& e) {
 		console() << "Error loading glitch shader: " << e.what() << std::endl;
+	}
+
+	try {
+		auto vertPath = app::loadAsset("blur.vert");  // Reuse same vertex shader
+		auto fragPath = app::loadAsset("glow.frag");
+		mGlowShader = gl::GlslProg::create(vertPath, fragPath);
+		console() << "Glow shader loaded" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error loading glow shader: " << e.what() << std::endl;
+	}
+
+	try {
+		auto vertPath = app::loadAsset("blur.vert");  // Reuse same vertex shader
+		auto fragPath = app::loadAsset("mosaic.frag");
+		mMosaicShader = gl::GlslProg::create(vertPath, fragPath);
+		console() << "Mosaic shader loaded" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error loading mosaic shader: " << e.what() << std::endl;
+	}
+
+	try {
+		auto vertPath = app::loadAsset("blur.vert");  // Reuse same vertex shader
+		auto fragPath = app::loadAsset("trails.frag");
+		mTrailsShader = gl::GlslProg::create(vertPath, fragPath);
+		console() << "Trails shader loaded" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error loading trails shader: " << e.what() << std::endl;
 	}
 
 	// Create fullscreen quad for post-processing (shader will be set dynamically)
@@ -334,6 +379,26 @@ void GraphicsRenderer::setEffect(const std::string& type, bool enabled) {
 		mEffectParams = {0.5f, 0.0f, 1.0f, 1.0f};
 		console() << "Glitch effect enabled (amount: 0.5 rgbOffset: 1.0 blockiness: 1.0)" << std::endl;
 	}
+	else if (type == "glow") {
+		mCurrentEffect = EFFECT_GLOW;
+		// Default glow params: [threshold, intensity, radius]
+		mEffectParams = {0.5f, 1.5f, 3.0f};
+		console() << "Glow effect enabled (threshold: 0.5 intensity: 1.5 radius: 3.0)" << std::endl;
+	}
+	else if (type == "mosaic") {
+		mCurrentEffect = EFFECT_MOSAIC;
+		// Default mosaic params: [blockSize, shape]
+		// shape: 0=square, 1=hexagon, 2=triangle, 3=circle
+		mEffectParams = {16.0f, 0.0f};
+		console() << "Mosaic effect enabled (blockSize: 16, shape: square)" << std::endl;
+	}
+	else if (type == "trails") {
+		mCurrentEffect = EFFECT_TRAILS;
+		// Default trails params: [decay] - how much of previous frame to keep (0.0-1.0)
+		mEffectParams = {0.92f};
+		mTrailsFirstFrame = true;  // Reset first frame flag
+		console() << "Trails effect enabled (decay: 0.92)" << std::endl;
+	}
 	else {
 		console() << "Unknown effect type: " << type << std::endl;
 		mCurrentEffect = EFFECT_NONE;
@@ -373,6 +438,15 @@ void GraphicsRenderer::applyEffect() {
 			break;
 		case EFFECT_GLITCH:
 			shader = mGlitchShader;
+			break;
+		case EFFECT_GLOW:
+			shader = mGlowShader;
+			break;
+		case EFFECT_MOSAIC:
+			shader = mMosaicShader;
+			break;
+		case EFFECT_TRAILS:
+			shader = mTrailsShader;
 			break;
 		default:
 			return;  // No effect
@@ -445,14 +519,40 @@ void GraphicsRenderer::applyEffect() {
 			shader->uniform("uParams", params);
 			break;
 		}
+		case EFFECT_GLOW: {
+			// params[0] = threshold, params[1] = intensity, params[2] = radius
+			shader->uniform("uTexelSize", vec2(1.0f / getWindowWidth(), 1.0f / getWindowHeight()));
+			float threshold = mEffectParams.size() > 0 ? mEffectParams[0] : 0.5f;
+			float intensity = mEffectParams.size() > 1 ? mEffectParams[1] : 1.5f;
+			float radius = mEffectParams.size() > 2 ? mEffectParams[2] : 3.0f;
+			shader->uniform("uThreshold", threshold);
+			shader->uniform("uIntensity", intensity);
+			shader->uniform("uRadius", radius);
+			break;
+		}
+		case EFFECT_MOSAIC: {
+			// params[0] = blockSize in pixels, params[1] = shape (0=square, 1=hex, 2=tri, 3=circle)
+			float blockSize = mEffectParams.size() > 0 ? mEffectParams[0] : 16.0f;
+			int shape = mEffectParams.size() > 1 ? static_cast<int>(mEffectParams[1]) : 0;
+			shader->uniform("uResolution", vec2(getWindowWidth(), getWindowHeight()));
+			shader->uniform("uBlockSize", blockSize);
+			shader->uniform("uShape", shape);
+			break;
+		}
+		case EFFECT_TRAILS: {
+			// Trails effect is handled in startDraw by fading instead of clearing
+			// Shader just passes through the texture
+			shader->uniform("uTexture", 0);
+			break;
+		}
 		default:
 			break;
 	}
 
-	// Bind FBO texture
+	// Bind FBO texture and draw fullscreen quad
 	gl::ScopedTextureBind scopedTexture(mFbo->getColorTexture(), 0);
 
-	// Create batch on-the-fly with current shader (batch caches its shader, so we recreate it)
+	// Create batch on-the-fly with current shader
 	auto rect = geom::Rect(Rectf(-1, -1, 1, 1)).texCoords(vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1));
 	auto batch = gl::Batch::create(rect, shader);
 	batch->draw();
@@ -613,6 +713,19 @@ void GraphicsRenderer::setupAudioInput(bool useOutput) {
 
 void GraphicsRenderer::setupAudioFromDevice(const std::string& deviceName) {
 	auto ctx = audio::Context::master();
+
+	// Clean up existing audio nodes first to avoid deadlock
+	if (mAudioInput) {
+		mAudioInput->disable();
+		mAudioInput->disconnectAll();
+		mAudioInput.reset();
+	}
+	if (mMonitorSpectralNode) {
+		mMonitorSpectralNode->disable();
+		mMonitorSpectralNode->disconnectAll();
+		mMonitorSpectralNode.reset();
+	}
+	mAudioInputEnabled = false;
 
 	// List all available devices
 	console() << "Available audio devices:" << std::endl;
@@ -1334,8 +1447,52 @@ void GraphicsRenderer::startDraw() {
 		}
 		if (mFbo) {
 			mFbo->bindFramebuffer();
-			// Clear with current background color
-			gl::clear(Color(_bgr, _bgg, _bgb));
+
+			// For trails effect, fade existing content instead of clearing
+			if (mCurrentEffect == EFFECT_TRAILS) {
+				// On first frame, do a full clear to initialize
+				if (mTrailsFirstFrame) {
+					gl::clear(Color(_bgr, _bgg, _bgb));
+					mTrailsFirstFrame = false;
+				}
+				else {
+					float decay = mEffectParams.size() > 0 ? mEffectParams[0] : 0.92f;
+					// Clamp decay to reasonable range
+					decay = std::max(0.5f, std::min(0.99f, decay));
+					float fadeAlpha = 1.0f - decay;  // How much to fade each frame
+
+					// Clear depth buffer but not color
+					glClear(GL_DEPTH_BUFFER_BIT);
+
+					// Save current state
+					gl::pushMatrices();
+					gl::setMatricesWindow(getWindowSize());
+
+					// Disable depth test/write for the fade quad
+					glDisable(GL_DEPTH_TEST);
+					glDepthMask(GL_FALSE);
+
+					// Enable blending for fade
+					glEnable(GL_BLEND);
+					glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+					// Draw semi-transparent background quad to fade previous frame
+					gl::color(ColorA(_bgr, _bgg, _bgb, fadeAlpha));
+					gl::drawSolidRect(Rectf(0, 0, getWindowWidth(), getWindowHeight()));
+
+					// Restore state completely
+					gl::color(1, 1, 1, 1);
+					glDisable(GL_BLEND);  // Disable blending so patterns render normally
+					glDepthMask(GL_TRUE);
+					glEnable(GL_DEPTH_TEST);
+
+					gl::popMatrices();
+				}
+			}
+			else {
+				// Normal clear for other effects
+				gl::clear(Color(_bgr, _bgg, _bgb));
+			}
 		}
 	}
 

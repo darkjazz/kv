@@ -293,11 +293,15 @@ public:
 		EFFECT_BLUR,
 		EFFECT_RADIAL,
 		EFFECT_MOTION,
-		EFFECT_GLITCH
+		EFFECT_GLITCH,
+		EFFECT_GLOW,
+		EFFECT_MOSAIC,
+		EFFECT_TRAILS
 	};
 
 	EffectType mCurrentEffect;
 	std::vector<float> mEffectParams;  // Variable parameters per effect
+	bool mTrailsFirstFrame = true;     // Track first frame for trails effect
 
 	void setEffect(const std::string& type, bool enabled);
 	void setEffectParams(const std::vector<float>& params);
@@ -413,6 +417,10 @@ private:
 	gl::GlslProgRef mRadialShader;
 	gl::GlslProgRef mMotionShader;
 	gl::GlslProgRef mGlitchShader;
+	gl::GlslProgRef mGlowShader;
+	gl::GlslProgRef mMosaicShader;
+	gl::GlslProgRef mTrailsShader;
+	gl::FboRef mAccumFbo;  // Accumulation buffer for trails effect
 	gl::BatchRef mFullscreenQuad;
 
 	// Audio visualization FBOs and textures
