@@ -214,18 +214,162 @@ void OSCMessenger::setUpListener() {
     });
     _listener.setListener( "/lambda/graphics/pattern",
     [&]( const osc::Message &msg ){
-        _ogl->patternLib[msg.getArgInt32(0)].active = msg.getArgInt32(1) == 1;
-        _ogl->patternLib[msg.getArgInt32(0)].alpha = msg.getArgFloat(2);
-        _ogl->patternLib[msg.getArgInt32(0)].colormap = msg.getArgInt32(3);
-        _ogl->patternLib[msg.getArgInt32(0)].alphamap = msg.getArgInt32(4);
-        _ogl->patternLib[msg.getArgInt32(0)].color.r = msg.getArgFloat(5);
-        _ogl->patternLib[msg.getArgInt32(0)].color.g = msg.getArgFloat(6);
-        _ogl->patternLib[msg.getArgInt32(0)].color.b = msg.getArgFloat(7);
+        int patternId = msg.getArgInt32(0);
+        Pattern* pattern = _ogl->getPattern(patternId);
+        if (pattern) {
+            pattern->setActive(msg.getArgInt32(1) == 1);
+            pattern->setAlpha(msg.getArgFloat(2));
+            pattern->setColorMap(msg.getArgInt32(3));
+            pattern->setAlphaMap(msg.getArgInt32(4));
+            pattern->setColor(Color(msg.getArgFloat(5), msg.getArgFloat(6), msg.getArgFloat(7)));
+        }
     });
+    _listener.setListener( "/lambda/graphics/pattern/audio",
+    [&]( const osc::Message &msg ){
+        int patternId = msg.getArgInt32(0);
+        Pattern* pattern = _ogl->getPattern(patternId);
+        if (pattern) {
+            pattern->setAudioReactivity(msg.getArgFloat(1));
+        }
+    });
+
+    // Audio input enable/disable
+    _listener.setListener( "/lambda/audio/input/enable",
+    [&]( const osc::Message &msg ){
+        bool enable = msg.getArgInt32(0) == 1;
+        _ogl->enableAudioInput(enable);
+        console() << "Audio input " << (enable ? "enabled" : "disabled") << " via OSC" << std::endl;
+    });
+
+    // Audio output capture (requires loopback driver)
+    _listener.setListener( "/lambda/audio/output/enable",
+    [&]( const osc::Message &msg ){
+        bool enable = msg.getArgInt32(0) == 1;
+        if (enable) {
+            _ogl->setupAudioInput(true);  // true = use output device
+            _ogl->enableAudioInput(true);
+        } else {
+            _ogl->enableAudioInput(false);
+        }
+        console() << "Audio output capture " << (enable ? "enabled" : "disabled") << " via OSC" << std::endl;
+    });
+
+    // Select specific audio device by name
+    _listener.setListener( "/lambda/audio/device",
+    [&]( const osc::Message &msg ){
+        std::string deviceName = msg.getArgString(0);
+        _ogl->setupAudioFromDevice(deviceName);
+        console() << "Setting audio device to: " << deviceName << std::endl;
+    });
+
+    // Audio input gain
+    _listener.setListener( "/lambda/audio/gain",
+    [&]( const osc::Message &msg ){
+        float gain = msg.getArgFloat(0);
+        _ogl->setAudioInputGain(gain);
+        console() << "Audio input gain set to: " << gain << std::endl;
+    });
+
+    // Waveform display toggle
+    _listener.setListener( "/lambda/audio/waveform",
+    [&]( const osc::Message &msg ){
+        bool enable = msg.getArgInt32(0) == 1;
+        _ogl->mShowWaveform = enable;
+        console() << "Waveform display " << (enable ? "enabled" : "disabled") << " via OSC" << std::endl;
+    });
+
+    // MFCC display toggle
+    _listener.setListener( "/lambda/audio/mfcc",
+    [&]( const osc::Message &msg ){
+        bool enable = msg.getArgInt32(0) == 1;
+        _ogl->mShowMFCC = enable;
+        console() << "MFCC display " << (enable ? "enabled" : "disabled") << " via OSC" << std::endl;
+    });
+
+    // Waveform color (RGB floats 0.0-1.0)
+    _listener.setListener( "/lambda/audio/waveform/color",
+    [&]( const osc::Message &msg ){
+        float r = msg.getArgFloat(0);
+        float g = msg.getArgFloat(1);
+        float b = msg.getArgFloat(2);
+        _ogl->mWaveformColor = vec3(r, g, b);
+        console() << "Waveform color set to RGB(" << r << ", " << g << ", " << b << ")" << std::endl;
+    });
+
+    // Waveform 3D ribbon mode toggle (int: 0=2D, 1=3D)
+    _listener.setListener( "/lambda/audio/waveform/ribbon",
+    [&]( const osc::Message &msg ){
+        bool enable = msg.getArgInt32(0) == 1;
+        _ogl->mWaveformRibbon3D = enable;
+        console() << "Waveform ribbon 3D mode " << (enable ? "enabled" : "disabled") << " via OSC" << std::endl;
+    });
+
+    // Ribbon trail depth spacing (float, default 50.0)
+    _listener.setListener( "/lambda/audio/waveform/ribbon/depth",
+    [&]( const osc::Message &msg ){
+        float depth = msg.getArgFloat(0);
+        _ogl->mRibbonDepthSpacing = depth;
+        console() << "Ribbon depth spacing set to " << depth << std::endl;
+    });
+
+    // Ribbon trail fade rate (float, default 0.08)
+    _listener.setListener( "/lambda/audio/waveform/ribbon/fade",
+    [&]( const osc::Message &msg ){
+        float fade = msg.getArgFloat(0);
+        _ogl->mRibbonFadeRate = fade;
+        console() << "Ribbon fade rate set to " << fade << std::endl;
+    });
+
+    // Ribbon trail number of layers (int, default 12, max 32)
+    _listener.setListener( "/lambda/audio/waveform/ribbon/layers",
+    [&]( const osc::Message &msg ){
+        int layers = msg.getArgInt32(0);
+        layers = std::max(1, std::min(32, layers));  // Clamp to 1-32
+        _ogl->mWaveformRibbonLayers = layers;
+        console() << "Ribbon layers set to " << layers << std::endl;
+    });
+
+    // MFCC hue start (float 0.0-1.0)
+    _listener.setListener( "/lambda/audio/mfcc/hue/start",
+    [&]( const osc::Message &msg ){
+        float hue = msg.getArgFloat(0);
+        _ogl->mMFCCHueStart = hue;
+        console() << "MFCC hue start set to " << hue << std::endl;
+    });
+
+    // MFCC hue range (float 0.0-1.0)
+    _listener.setListener( "/lambda/audio/mfcc/hue/range",
+    [&]( const osc::Message &msg ){
+        float range = msg.getArgFloat(0);
+        _ogl->mMFCCHueRange = range;
+        console() << "MFCC hue range set to " << range << std::endl;
+    });
+
+    // Boid pattern system - matches old lambda app format
     _listener.setListener( "/lambda/graphics/boidpattern",
     [&]( const osc::Message &msg ){
-        _ogl->boidPatternLib[msg.getArgInt32(0)].active = msg.getArgInt32(1) == 1;
-        _ogl->boidPatternLib[msg.getArgInt32(0)].mapIndex = msg.getArgInt32(2);
+        // Old format: patternId(int), active(int), mapIndex(int)
+        // mapIndex was used for different cubemap image sets (0-4) - now ignored
+        int patternId = msg.getArgInt32(0);
+        bool active = msg.getArgInt32(1) == 1;
+        int mapIndex = msg.getArgInt32(2);  // Read for compatibility but ignore
+
+        CI_LOG_I("Received boidpattern OSC: patternId=" << patternId << " active=" << active << " mapIndex=" << mapIndex);
+
+        // Update new boid pattern system
+        BoidPattern* pattern = _ogl->getBoidPattern(patternId);
+        if (pattern) {
+            pattern->setActive(active);
+            CI_LOG_I("Set pattern " << patternId << " to active=" << active);
+        } else {
+            CI_LOG_E("Pattern " << patternId << " not found!");
+        }
+
+        // Keep legacy system for backward compatibility
+        if (patternId >= 0 && patternId < numBoidPatterns) {
+            _ogl->boidPatternLib[patternId].active = active;
+            _ogl->boidPatternLib[patternId].mapIndex = mapIndex;  // Kept for legacy compatibility
+        }
     });
     _listener.setListener( "/lambda/boids/init",
     [&]( const osc::Message &msg ){
@@ -250,12 +394,109 @@ void OSCMessenger::setUpListener() {
         _boids->alignment = msg.getArgFloat(2);
         _boids->separation = msg.getArgFloat(3);
         _boids->center = msg.getArgFloat(4);
+        // Update base values when manually setting parameters
+        _boids->baseCohesion = _boids->cohesion;
+        _boids->baseSeparation = _boids->separation;
+        _boids->baseAlignment = _boids->alignment;
+    });
+    _listener.setListener( "/lambda/boids/audio",
+    [&]( const osc::Message &msg ){
+        // Set audio reactivity for cohesion, separation, alignment
+        // Values 0.0-1.0 determine how much audio affects each parameter
+        _boids->audioReactivityCohesion = msg.getArgFloat(0);
+        _boids->audioReactivitySeparation = msg.getArgFloat(1);
+        _boids->audioReactivityAlignment = msg.getArgFloat(2);
     });
     _listener.setListener( "/lambda/boids/kill",
     [&]( const osc::Message &msg ){
         delete _boids;
         _boids = nullptr;
         _ogl->boids = nullptr;
+    });
+    // Additional boid pattern control messages
+    _listener.setListener( "/lambda/boids/pattern/active",
+    [&]( const osc::Message &msg ){
+        int patternId = msg.getArgInt32(0);
+        bool active = msg.getArgInt32(1) == 1;
+        BoidPattern* pattern = _ogl->getBoidPattern(patternId);
+        if (pattern) {
+            pattern->setActive(active);
+        }
+    });
+    _listener.setListener( "/lambda/boids/pattern/color",
+    [&]( const osc::Message &msg ){
+        // Read pattern ID - try as int first, fall back to float
+        int patternId;
+        try {
+            patternId = msg.getArgInt32(0);
+        } catch (...) {
+            patternId = (int)msg.getArgFloat(0);
+        }
+        BoidPattern* pattern = _ogl->getBoidPattern(patternId);
+        if (pattern) {
+            pattern->setColor(Color(msg.getArgFloat(1), msg.getArgFloat(2), msg.getArgFloat(3)));
+        }
+    });
+    _listener.setListener( "/lambda/boids/pattern/alpha",
+    [&]( const osc::Message &msg ){
+        int patternId = (int)msg.getArgFloat(0);  // Accept float and convert to int
+        BoidPattern* pattern = _ogl->getBoidPattern(patternId);
+        if (pattern) {
+            pattern->setAlpha(msg.getArgFloat(1));
+        }
+    });
+    // Code panel / live coding messages
+    _listener.setListener( "/lambda/livecode/activate",
+    [&]( const osc::Message &msg ){
+        _ogl->codePanelActive = msg.getArgInt32(0) == 1;
+    });
+    _listener.setListener( "/lambda/livecode/map",
+    [&]( const osc::Message &msg ){
+        _ogl->codePanelMapped = msg.getArgInt32(0) == 1;
+    });
+    _listener.setListener( "/lambda/livecode/codeline",
+    [&]( const osc::Message &msg ){
+        _ogl->codePanel.addLine(msg.getArgString(0));
+    });
+    _listener.setListener( "/lambda/livecode/codetitle",
+    [&]( const osc::Message &msg ){
+        _ogl->codePanel.title = msg.getArgString(0);
+    });
+    _listener.setListener( "/lambda/livecode/fadeTime",
+    [&]( const osc::Message &msg ){
+        _ogl->codePanel.fadeTime = msg.getArgInt32(0);
+    });
+    _listener.setListener( "/lambda/livecode/codecolour",
+    [&]( const osc::Message &msg ){
+        _ogl->codePanel.setCodeColor(msg.getArgFloat(0), msg.getArgFloat(1), msg.getArgFloat(2));
+    });
+    _listener.setListener( "/lambda/livecode/codefont",
+    [&]( const osc::Message &msg ){
+        _ogl->codePanel.setCodeFont(msg.getArgString(0), msg.getArgInt32(1));
+    });
+    _listener.setListener( "/lambda/efx/enable",
+    [&]( const osc::Message &msg ){
+        std::string type = msg.getArgString(0);
+        bool enabled = msg.getArgInt32(1) == 1;
+        _ogl->setEffect(type, enabled);
+    });
+    _listener.setListener( "/lambda/efx/params",
+    [&]( const osc::Message &msg ){
+        std::vector<float> params;
+        for (int i = 0; i < msg.getNumArgs(); i++) {
+            // Try to get as float, fall back to int if needed
+            try {
+                if (msg.getArgType(i) == osc::ArgType::INTEGER_32) {
+                    params.push_back(static_cast<float>(msg.getArgInt32(i)));
+                } else {
+                    params.push_back(msg.getArgFloat(i));
+                }
+            }
+            catch (const std::exception& e) {
+                console() << "Error parsing param " << i << ": " << e.what() << std::endl;
+            }
+        }
+        _ogl->setEffectParams(params);
     });
     _listener.setListener( "/lambda/framerate",
     [&]( const osc::Message &msg ){
@@ -273,5 +514,15 @@ void OSCMessenger::setUpListener() {
         CI_LOG_E( "Error binding: " << ex.what() << " val: " << ex.value() );
         quit();
     }
+
+    _listener.listen(
+    []( asio::error_code error, protocol::endpoint endpoint ) -> bool {
+        if( error ) {
+            CI_LOG_E( "Error Listening: " << error.message() << " val: " << error.value() << " endpoint: " << endpoint );
+            return false;
+        }
+        else
+            return true;
+    });
 
 }

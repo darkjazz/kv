@@ -158,8 +158,9 @@ public:
 	void compareBMU(int, int, int);
 	void trainSOM(int, int, int);
 	void nextSOM(int, int, int);
-	
+
 	Cell* currentBMU() { return _bmu; }
+	const vector<double>& getInputVector() const { return _inputVector; }
 	Index3D* bestMatchHistoryAt(int index) { return &_bestMatchHistory[index]; } 
 	int bestMatchHistorySize() { return _bestMatchHistory.size(); }
 	bool inputVectorUpdated() { return _inputVectorUpdated; }

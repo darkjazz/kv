@@ -18,6 +18,9 @@
 		00B9955B1B128DF400A5C623 /* IOSurface.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 00B995591B128DF400A5C623 /* IOSurface.framework */; };
 		5323E6B20EAFCA74003A9687 /* CoreVideo.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5323E6B10EAFCA74003A9687 /* CoreVideo.framework */; };
 		8D11072F0486CEB800E47090 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1058C7A1FEA54F0111CA2CBB /* Cocoa.framework */; };
+		9D108E2E2E9EC84B0009E68D /* pattern.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9D108E2D2E9EC84B0009E68D /* pattern.cpp */; };
+		9D108E2F2E9ECA4C0009E68D /* boidpattern.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9D108E302E9ECA4C0009E68D /* boidpattern.cpp */; };
+		9D108E312E9F0A100009E68D /* codepanel.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9D108E322E9F0A100009E68D /* codepanel.cpp */; };
 		9DFF34942D2071AE0062F5AD /* util.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9DFF34912D2071AE0062F5AD /* util.cpp */; };
 		9DFF34952D2071AE0062F5AD /* rule.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9DFF348F2D2071AE0062F5AD /* rule.cpp */; };
 		9DFF34962D2071AE0062F5AD /* ogl.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9DFF348D2D2071AE0062F5AD /* ogl.cpp */; };
@@ -45,6 +48,12 @@
 		5323E6B10EAFCA74003A9687 /* CoreVideo.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreVideo.framework; path = /System/Library/Frameworks/CoreVideo.framework; sourceTree = "<absolute>"; };
 		53676EF395E44636949A59D9 /* kv_Prefix.pch */ = {isa = PBXFileReference; lastKnownFileType = "\"\""; path = kv_Prefix.pch; sourceTree = "<group>"; };
 		8D1107320486CEB800E47090 /* kv.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = kv.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		9D108E2C2E9EC84B0009E68D /* pattern.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = pattern.h; path = ../src/pattern.h; sourceTree = SOURCE_ROOT; };
+		9D108E2D2E9EC84B0009E68D /* pattern.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = pattern.cpp; path = ../src/pattern.cpp; sourceTree = SOURCE_ROOT; };
+		9D108E2F2E9ECA4B0009E68D /* boidpattern.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = boidpattern.h; path = ../src/boidpattern.h; sourceTree = SOURCE_ROOT; };
+		9D108E302E9ECA4C0009E68D /* boidpattern.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = boidpattern.cpp; path = ../src/boidpattern.cpp; sourceTree = SOURCE_ROOT; };
+		9D108E312E9F0A0F0009E68D /* codepanel.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = codepanel.h; path = ../src/codepanel.h; sourceTree = SOURCE_ROOT; };
+		9D108E322E9F0A100009E68D /* codepanel.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = codepanel.cpp; path = ../src/codepanel.cpp; sourceTree = SOURCE_ROOT; };
 		9DFF348C2D2071AE0062F5AD /* ogl.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = ogl.h; path = ../src/ogl.h; sourceTree = SOURCE_ROOT; };
 		9DFF348D2D2071AE0062F5AD /* ogl.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ogl.cpp; path = ../src/ogl.cpp; sourceTree = SOURCE_ROOT; };
 		9DFF348E2D2071AE0062F5AD /* rule.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = rule.h; path = ../src/rule.h; sourceTree = SOURCE_ROOT; };
@@ -63,6 +72,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		9D108E372E9EE0530009E68D /* Assets */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Assets; sourceTree = "<group>"; };
 		9DFF371F2D5F376B0062F5AD /* OSC */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); name = OSC; path = ../blocks/OSC; sourceTree = SOURCE_ROOT; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
@@ -99,6 +109,12 @@
 		080E96DDFE201D6D7F000001 /* Source */ = {
 			isa = PBXGroup;
 			children = (
+				9D108E2C2E9EC84B0009E68D /* pattern.h */,
+				9D108E2D2E9EC84B0009E68D /* pattern.cpp */,
+				9D108E2F2E9ECA4B0009E68D /* boidpattern.h */,
+				9D108E302E9ECA4C0009E68D /* boidpattern.cpp */,
+				9D108E312E9F0A0F0009E68D /* codepanel.h */,
+				9D108E322E9F0A100009E68D /* codepanel.cpp */,
 				9DFF37172D5E82CB0062F5AD /* boids.h */,
 				9DFF37182D5E82CB0062F5AD /* boids.cpp */,
 				9DFF34982D4518E30062F5AD /* osc.h */,
@@ -154,6 +170,7 @@
 		29B97314FDCFA39411CA2CEA /* kv */ = {
 			isa = PBXGroup;
 			children = (
+				9D108E372E9EE0530009E68D /* Assets */,
 				01B97315FEAEA392516A2CEA /* Blocks */,
 				29B97315FDCFA39411CA2CEA /* Headers */,
 				080E96DDFE201D6D7F000001 /* Source */,
@@ -264,6 +281,9 @@
 				9DFF34972D2071AE0062F5AD /* world.cpp in Sources */,
 				B39087D54A544185803EDE3A /* kvApp.cpp in Sources */,
 				9DFF37192D5E82CB0062F5AD /* boids.cpp in Sources */,
+				9D108E2E2E9EC84B0009E68D /* pattern.cpp in Sources */,
+				9D108E2F2E9ECA4C0009E68D /* boidpattern.cpp in Sources */,
+				9D108E312E9F0A100009E68D /* codepanel.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -12,7 +12,6 @@ using namespace std;
 
 class kvApp : public App {
   public:
-    void prepareSettings(Settings* settings);
     void setup() override;
     void resize() override;
     void keyDown( KeyEvent event ) override;
@@ -24,75 +23,12 @@ class kvApp : public App {
     World *world;
     GraphicsRenderer *ogl;
     Rule *rule;
-//    Boids *boids;
+    Boids *boids;
 
-private:
-    int _winSizeX, _winSizeY;
-    int _frameRate, _inport, _outport, _windowMode, _fullScreen;
-    std::string _remoteHost;
+    int _inport = 7000;
+    int _outport = 57121;
+    std::string _remoteHost = "127.0.0.1";
 };
-
-void kvApp::prepareSettings(Settings* settings) {
-    auto displays = Display::getDisplays();
-    
-    // Check if a secondary display is available
-    DisplayRef targetDisplay;
-    if (displays.size() > 1) {
-        targetDisplay = displays[1]; // Select the second display
-    } else {
-        targetDisplay = Display::getMainDisplay(); // Fallback to main display
-    }
-    
-    auto targetSize = targetDisplay->getSize();
-    
-    _winSizeX = 1024; // Default width
-    _winSizeY = 768;  // Default height
-    _frameRate = 32;
-    _remoteHost = "127.0.0.1";
-    _inport = 7000;
-    _outport = 57120;
-    _windowMode = 0;
-    _fullScreen = 0;
-
-    // Use App::getCommandLineArgs() to retrieve command-line arguments
-    std::vector<std::string> args = getCommandLineArgs();
-    for (size_t i = 1; i < args.size(); i += 2) {
-        if (args[i] == "-screenx") {
-            _winSizeX = atoi(args[i + 1].c_str());
-        } else if (args[i] == "-screeny") {
-            _winSizeY = atoi(args[i + 1].c_str());
-        } else if (args[i] == "-fps") {
-            _frameRate = atoi(args[i + 1].c_str());
-        } else if (args[i] == "-remote") {
-            _remoteHost = args[i + 1];
-        } else if (args[i] == "-inport") {
-            _inport = atoi(args[i + 1].c_str());
-        } else if (args[i] == "-outport") {
-            _outport = atoi(args[i + 1].c_str());
-        } else if (args[i] == "-wmode") {
-            _windowMode = atoi(args[i + 1].c_str());
-        } else if (args[i] == "-full") {
-            _fullScreen = atoi(args[i + 1].c_str());
-        }
-    }
-
-    if (_fullScreen > 0) {
-        // Fullscreen: Match window size to the screen size
-        settings->setFullScreen();
-        _winSizeX = targetSize.x;
-        _winSizeY = targetSize.y;
-    } else {
-        // Position window on the secondary display or fallback to main display
-        if (_windowMode == 0)
-            settings->setWindowPos(targetDisplay->getBounds().x1, targetDisplay->getBounds().y1);
-        else
-            settings->setWindowPos(targetDisplay->getBounds().x2 - _winSizeX, targetDisplay->getBounds().y2 - _winSizeY);
-    }
-
-    settings->setWindowSize(_winSizeX, _winSizeY);
-    settings->setBorderless(true);
-    settings->setFrameRate(_frameRate);
-}
 
 void kvApp::resize() {
     ogl->reshape();
@@ -100,6 +36,58 @@ void kvApp::resize() {
 
 void kvApp::setup()
 {
+    int _winSizeX = 1024;
+    int _winSizeY = 768;
+    int _frameRate = 30;
+    int _windowMode = 1;  // Default to mode 1 (external display/projector)
+    int _fullScreen = 1;  // Default to fullscreen
+
+    auto args = getCommandLineArgs();
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "-screenx" && i + 1 < args.size()) {
+            _winSizeX = std::stoi(args[i + 1]);
+        } else if (args[i] == "-screeny" && i + 1 < args.size()) {
+            _winSizeY = std::stoi(args[i + 1]);
+        } else if (args[i] == "-fps" && i + 1 < args.size()) {
+            _frameRate = std::stoi(args[i + 1]);
+        } else if (args[i] == "-wmode" && i + 1 < args.size()) {
+            _windowMode = std::stoi(args[i + 1]);
+        } else if (args[i] == "-full" && i + 1 < args.size()) {
+            _fullScreen = std::stoi(args[i + 1]);
+        }
+    }
+
+    auto displays = Display::getDisplays();
+
+    // Check if a secondary display is available
+    DisplayRef targetDisplay;
+    if (_windowMode == 1 && displays.size() > 1) {
+        targetDisplay = displays[1]; // mode 1 = Select the second display (projector)
+    } else {
+        targetDisplay = Display::getMainDisplay(); // mode 0 = main display
+    }
+
+    auto targetSize = targetDisplay->getSize();
+
+    // Move window to target display BEFORE going fullscreen
+    if (_windowMode == 1 && displays.size() > 1) {
+        // Position on secondary display
+        getWindow()->setPos(targetDisplay->getBounds().x1, targetDisplay->getBounds().y1);
+    } else {
+        // Position on main display
+        getWindow()->setPos(targetDisplay->getBounds().x1, targetDisplay->getBounds().y1);
+    }
+
+    setWindowSize(_winSizeX, _winSizeY);
+
+    if (_fullScreen > 0) {
+        setFullScreen(_fullScreen, FullScreenOptions().display(targetDisplay));
+        _winSizeX = targetSize.x;
+        _winSizeY = targetSize.y;
+    }
+    
+    setFrameRate(_frameRate);
+
     oscMessenger = new OSCMessenger(_remoteHost, _outport, _inport);
     world = new World();
     ogl = new GraphicsRenderer(world);
@@ -133,18 +121,23 @@ void kvApp::draw()
     ogl->startDraw();
         
     if (world->initialized()) {
-        
+
         int x, y, z;
         world->prepareNext();
-        
+
         for (x = 0; x < world->sizeX(); x++) {
             for (y = 0; y < world->sizeY(); y++) {
                 for (z = 0; z < world->sizeZ(); z++) {
-                    
+
                     if (world->ruleInitialized)
                         world->next(x, y, z);
                     if (world->somActivated)
                         world->nextSOM(x, y, z);
+
+                    // Count alive cells for accurate stats
+                    if (world->cells[x][y][z].states[world->index()] > 0.0) {
+                        world->incrementAlive();
+                    }
 
                     ogl->drawFragment(&world->cells[x][y][z]);
                 }
@@ -161,6 +154,34 @@ void kvApp::draw()
 void kvApp::shutdown() {
     delete ogl;
     delete world;
+    delete oscMessenger;
 }
 
-CINDER_APP( kvApp, RendererGl( RendererGl::Options().msaa( 16 ) ) )
+CINDER_APP( kvApp, RendererGl(RendererGl::Options().msaa( 16 )), [&]( App::Settings *settings ) {
+    
+//    auto displays = Display::getDisplays();
+//    
+//    // Check if a secondary display is available
+//    DisplayRef targetDisplay;
+//    if (displays.size() > 1) {
+//        targetDisplay = displays[1]; // Select the second display
+//    } else {
+//        targetDisplay = Display::getMainDisplay(); // Fallback to main display
+//    }
+//    
+//    auto targetSize = targetDisplay->getSize();
+    
+//    if (_fullScreen > 0) {
+//        settings->setFullScreen();
+//        _winSizeX = targetSize.x;
+//        _winSizeY = targetSize.y;
+//    }
+//    if (_windowMode == 0)
+//        settings->setWindowPos(targetDisplay->getBounds().x1, targetDisplay->getBounds().y1);
+//    else
+//        settings->setWindowPos(targetDisplay->getBounds().x2 - _winSizeX, targetDisplay->getBounds().y2 - _winSizeY);
+//    settings->setWindowSize(_winSizeX, _winSizeY);
+    
+    settings->setBorderless(true);
+//    settings->setFrameRate(_frameRate);
+})
