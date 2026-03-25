@@ -222,6 +222,9 @@ void GraphicsRenderer::setupOgl () {
 	mWaterSim = new WaterSim();
 	mWaterSim->setup(256);
 
+	// Initialize standalone water scene (pool + caustics, evanw approach)
+	mWaterScene.setup(8.0f, 256, 512, 128);
+
 	// Initialize post-processing FBOs (including audio visualization FBOs)
 	setupPostProcessing();
 
@@ -1310,11 +1313,19 @@ void GraphicsRenderer::update() {
 		updateAudioFeatures();
 	}
 
-	// Update water simulation
+	// Update water simulation (post-process caustics path)
 	if (mWaterSim && mWaterSim->isReady()) {
 		mWaterSim->update();
 		if (mWaterSim->cymatics) {
 			mWaterSim->addCymaticDrops(mMFCCCoeffs, mAudioAmplitude);
+		}
+	}
+
+	// Update standalone water scene
+	if (mWaterScene.isReady()) {
+		mWaterScene.update();
+		if (mWaterScene.cymatics) {
+			mWaterScene.addCymaticDrops(mMFCCCoeffs, mAudioAmplitude);
 		}
 	}
 
@@ -2499,6 +2510,9 @@ void GraphicsRenderer::endDraw() {
 		else
 			drawCodePanel();
 	}
+
+	// Draw standalone water scene (pool + caustics)
+	mWaterScene.draw(mCam);
 
 	// Draw audio visualizations (2D overlays)
 	drawWaveform();

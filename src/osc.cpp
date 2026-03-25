@@ -522,6 +522,61 @@ void OSCMessenger::setUpListener() {
     [&]( const osc::Message &msg ){
         if (_ogl->mWaterSim) _ogl->mWaterSim->waveSpeed = msg.getArgFloat(0);
     });
+
+    // Standalone water scene (pool + caustics, evanw approach)
+    _listener.setListener( "/lambda/pool/show",
+    [&]( const osc::Message &msg ){
+        bool on = msg.getArgInt32(0) == 1;
+        _ogl->mWaterScene.isVisible = on;
+        console() << "WaterScene: " << (on ? "visible" : "hidden") << std::endl;
+    });
+    _listener.setListener( "/lambda/pool/drop",
+    [&]( const osc::Message &msg ){
+        // args: worldX worldZ radius strength
+        float x = msg.getArgFloat(0);
+        float z = msg.getArgFloat(1);
+        float r = msg.getArgFloat(2);
+        float s = msg.getArgFloat(3);
+        _ogl->mWaterScene.addDrop(x, z, r, s);
+    });
+    _listener.setListener( "/lambda/pool/cymatics",
+    [&]( const osc::Message &msg ){
+        _ogl->mWaterScene.cymatics = msg.getArgInt32(0) == 1;
+    });
+    _listener.setListener( "/lambda/pool/damping",
+    [&]( const osc::Message &msg ){
+        _ogl->mWaterScene.damping = msg.getArgFloat(0);
+    });
+    _listener.setListener( "/lambda/pool/speed",
+    [&]( const osc::Message &msg ){
+        _ogl->mWaterScene.waveSpeed = msg.getArgFloat(0);
+    });
+    _listener.setListener( "/lambda/pool/caustic",
+    [&]( const osc::Message &msg ){
+        // args: strength scale
+        _ogl->mWaterScene.causticStrength = msg.getArgFloat(0);
+        if (msg.getNumArgs() > 1) _ogl->mWaterScene.causticScale = msg.getArgFloat(1);
+    });
+    _listener.setListener( "/lambda/pool/surface",
+    [&]( const osc::Message &msg ){
+        // args: show(0|1) alpha heightScale
+        _ogl->mWaterScene.drawSurface = msg.getArgInt32(0) == 1;
+        if (msg.getNumArgs() > 1) _ogl->mWaterScene.waterAlpha  = msg.getArgFloat(1);
+        if (msg.getNumArgs() > 2) _ogl->mWaterScene.heightScale = msg.getArgFloat(2);
+    });
+    _listener.setListener( "/lambda/pool/color",
+    [&]( const osc::Message &msg ){
+        // args: r g b  (pool floor/wall base color)
+        _ogl->mWaterScene.poolColor = vec3(
+            msg.getArgFloat(0), msg.getArgFloat(1), msg.getArgFloat(2));
+    });
+    _listener.setListener( "/lambda/pool/watercolor",
+    [&]( const osc::Message &msg ){
+        // args: r g b
+        _ogl->mWaterScene.waterColor = vec3(
+            msg.getArgFloat(0), msg.getArgFloat(1), msg.getArgFloat(2));
+    });
+
     _listener.setListener( "/lambda/framerate",
     [&]( const osc::Message &msg ){
         setFrameRate(msg.getArgFloat(0));

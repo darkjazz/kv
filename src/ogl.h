@@ -39,6 +39,7 @@
 #include "boidpattern.h"
 #include "codepanel.h"
 #include "watersim.h"
+#include "waterscene.h"
 
 // Audio includes (forward declarations to avoid QuickDraw Pattern conflict)
 namespace cinder { namespace audio {
@@ -309,7 +310,8 @@ public:
 	void setEffectParams(const std::vector<float>& params);
 
 	// Water simulation / caustics / cymatics
-	WaterSim* mWaterSim = nullptr;
+	WaterSim*  mWaterSim   = nullptr;
+	WaterScene mWaterScene;
 	void addWaterDrop(float x, float y, float radius, float strength);
 
 private:

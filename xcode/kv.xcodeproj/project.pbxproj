@@ -22,6 +22,7 @@
 		9D108E2F2E9ECA4C0009E68D /* boidpattern.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9D108E302E9ECA4C0009E68D /* boidpattern.cpp */; };
 		9D108E312E9F0A100009E68D /* codepanel.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9D108E322E9F0A100009E68D /* codepanel.cpp */; };
 		9D2057A12FA000000000B001 /* watersim.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9D2057A02FA000000000B000 /* watersim.cpp */; };
+		9D2057A12FA000000000C001 /* waterscene.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9D2057A02FA000000000C000 /* waterscene.cpp */; };
 		9DFF34942D2071AE0062F5AD /* util.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9DFF34912D2071AE0062F5AD /* util.cpp */; };
 		9DFF34952D2071AE0062F5AD /* rule.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9DFF348F2D2071AE0062F5AD /* rule.cpp */; };
 		9DFF34962D2071AE0062F5AD /* ogl.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9DFF348D2D2071AE0062F5AD /* ogl.cpp */; };
@@ -57,6 +58,8 @@
 		9D108E322E9F0A100009E68D /* codepanel.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = codepanel.cpp; path = ../src/codepanel.cpp; sourceTree = SOURCE_ROOT; };
 		9D2057A02FA000000000B000 /* watersim.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = watersim.cpp; path = ../src/watersim.cpp; sourceTree = SOURCE_ROOT; };
 		9D2057A02FA000000000B002 /* watersim.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = watersim.h; path = ../src/watersim.h; sourceTree = SOURCE_ROOT; };
+		9D2057A02FA000000000C000 /* waterscene.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = waterscene.cpp; path = ../src/waterscene.cpp; sourceTree = SOURCE_ROOT; };
+		9D2057A02FA000000000C002 /* waterscene.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = waterscene.h; path = ../src/waterscene.h; sourceTree = SOURCE_ROOT; };
 		9DFF348C2D2071AE0062F5AD /* ogl.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = ogl.h; path = ../src/ogl.h; sourceTree = SOURCE_ROOT; };
 		9DFF348D2D2071AE0062F5AD /* ogl.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ogl.cpp; path = ../src/ogl.cpp; sourceTree = SOURCE_ROOT; };
 		9DFF348E2D2071AE0062F5AD /* rule.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = rule.h; path = ../src/rule.h; sourceTree = SOURCE_ROOT; };
@@ -120,6 +123,8 @@
 				9D108E322E9F0A100009E68D /* codepanel.cpp */,
 				9D2057A02FA000000000B002 /* watersim.h */,
 				9D2057A02FA000000000B000 /* watersim.cpp */,
+				9D2057A02FA000000000C002 /* waterscene.h */,
+				9D2057A02FA000000000C000 /* waterscene.cpp */,
 				9DFF37172D5E82CB0062F5AD /* boids.h */,
 				9DFF37182D5E82CB0062F5AD /* boids.cpp */,
 				9DFF34982D4518E30062F5AD /* osc.h */,
@@ -290,6 +295,7 @@
 				9D108E2F2E9ECA4C0009E68D /* boidpattern.cpp in Sources */,
 				9D108E312E9F0A100009E68D /* codepanel.cpp in Sources */,
 				9D2057A12FA000000000B001 /* watersim.cpp in Sources */,
+			9D2057A12FA000000000C001 /* waterscene.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
