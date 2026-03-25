@@ -38,6 +38,7 @@
 #include "pattern.h"
 #include "boidpattern.h"
 #include "codepanel.h"
+#include "watersim.h"
 
 // Audio includes (forward declarations to avoid QuickDraw Pattern conflict)
 namespace cinder { namespace audio {
@@ -296,7 +297,8 @@ public:
 		EFFECT_GLITCH,
 		EFFECT_GLOW,
 		EFFECT_MOSAIC,
-		EFFECT_TRAILS
+		EFFECT_TRAILS,
+		EFFECT_CAUSTICS
 	};
 
 	EffectType mCurrentEffect;
@@ -305,6 +307,10 @@ public:
 
 	void setEffect(const std::string& type, bool enabled);
 	void setEffectParams(const std::vector<float>& params);
+
+	// Water simulation / caustics / cymatics
+	WaterSim* mWaterSim = nullptr;
+	void addWaterDrop(float x, float y, float radius, float strength);
 
 private:
 
@@ -420,6 +426,7 @@ private:
 	gl::GlslProgRef mGlowShader;
 	gl::GlslProgRef mMosaicShader;
 	gl::GlslProgRef mTrailsShader;
+	gl::GlslProgRef mCausticsShader;
 	gl::FboRef mAccumFbo;  // Accumulation buffer for trails effect
 	gl::BatchRef mFullscreenQuad;
 

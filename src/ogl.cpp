@@ -218,6 +218,10 @@ void GraphicsRenderer::setupOgl () {
 		console() << "Error creating audio visualization FBOs: " << e.what() << std::endl;
 	}
 
+	// Initialize water simulation (runs independently of post-process effects)
+	mWaterSim = new WaterSim();
+	mWaterSim->setup(256);
+
 	// Initialize post-processing FBOs (including audio visualization FBOs)
 	setupPostProcessing();
 
@@ -338,6 +342,16 @@ void GraphicsRenderer::setupPostProcessing() {
 		console() << "Error loading trails shader: " << e.what() << std::endl;
 	}
 
+	try {
+		auto vertPath = app::loadAsset("blur.vert");
+		auto fragPath = app::loadAsset("caustics.frag");
+		mCausticsShader = gl::GlslProg::create(vertPath, fragPath);
+		console() << "Caustics shader loaded" << std::endl;
+	}
+	catch (const std::exception& e) {
+		console() << "Error loading caustics shader: " << e.what() << std::endl;
+	}
+
 	// Create fullscreen quad for post-processing (shader will be set dynamically)
 	auto rect = geom::Rect(Rectf(-1, -1, 1, 1));
 	if (mBlurShader) {
@@ -399,6 +413,12 @@ void GraphicsRenderer::setEffect(const std::string& type, bool enabled) {
 		mTrailsFirstFrame = true;  // Reset first frame flag
 		console() << "Trails effect enabled (decay: 0.92)" << std::endl;
 	}
+	else if (type == "caustics") {
+		mCurrentEffect = EFFECT_CAUSTICS;
+		// params: [intensity, normalScale, depth, waterScale, r, g, b]
+		mEffectParams = {1.0f, 3.0f, 0.4f, 1.0f, 1.0f, 0.95f, 0.82f};
+		console() << "Caustics effect enabled" << std::endl;
+	}
 	else {
 		console() << "Unknown effect type: " << type << std::endl;
 		mCurrentEffect = EFFECT_NONE;
@@ -408,6 +428,10 @@ void GraphicsRenderer::setEffect(const std::string& type, bool enabled) {
 void GraphicsRenderer::setEffectParams(const std::vector<float>& params) {
 	mEffectParams = params;
 	console() << "Effect params updated: " << params.size() << " values" << std::endl;
+}
+
+void GraphicsRenderer::addWaterDrop(float x, float y, float radius, float strength) {
+	if (mWaterSim) mWaterSim->addDrop(x, y, radius, strength);
 }
 
 void GraphicsRenderer::applyEffect() {
@@ -423,6 +447,36 @@ void GraphicsRenderer::applyEffect() {
 	// Use identity matrices for fullscreen quad in NDC (-1 to 1)
 	gl::ScopedMatrices scopedMatrices;
 	gl::setMatrices(CameraOrtho(-1, 1, -1, 1, -1, 1));
+
+	// Caustics needs two textures — handle separately
+	if (mCurrentEffect == EFFECT_CAUSTICS) {
+		if (mCausticsShader && mWaterSim && mWaterSim->isReady()) {
+			gl::ScopedGlslProg    scopedShader(mCausticsShader);
+			gl::ScopedTextureBind sceneTex(mFbo->getColorTexture(), 0);
+			gl::ScopedTextureBind waterTex(mWaterSim->getHeightTexture(), 1);
+
+			float intensity   = mEffectParams.size() > 0 ? mEffectParams[0] : 1.0f;
+			float normalScale = mEffectParams.size() > 1 ? mEffectParams[1] : 3.0f;
+			float depth       = mEffectParams.size() > 2 ? mEffectParams[2] : 0.4f;
+			float waterScale  = mEffectParams.size() > 3 ? mEffectParams[3] : 1.0f;
+			float cr          = mEffectParams.size() > 4 ? mEffectParams[4] : 1.0f;
+			float cg          = mEffectParams.size() > 5 ? mEffectParams[5] : 0.95f;
+			float cb          = mEffectParams.size() > 6 ? mEffectParams[6] : 0.82f;
+
+			mCausticsShader->uniform("uTexture",     0);
+			mCausticsShader->uniform("uWaterTex",    1);
+			mCausticsShader->uniform("uIntensity",   intensity);
+			mCausticsShader->uniform("uNormalScale", normalScale);
+			mCausticsShader->uniform("uDepth",       depth);
+			mCausticsShader->uniform("uWaterScale",  waterScale);
+			mCausticsShader->uniform("uColor",       vec3(cr, cg, cb));
+
+			auto rect = geom::Rect(Rectf(-1, -1, 1, 1))
+			                .texCoords(vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1));
+			gl::Batch::create(rect, mCausticsShader)->draw();
+		}
+		return;
+	}
 
 	// Select shader based on current effect
 	gl::GlslProgRef shader;
@@ -1254,6 +1308,14 @@ void GraphicsRenderer::update() {
 		computeMFCCs();  // Compute MFCCs from FFT data
 	} else {
 		updateAudioFeatures();
+	}
+
+	// Update water simulation
+	if (mWaterSim && mWaterSim->isReady()) {
+		mWaterSim->update();
+		if (mWaterSim->cymatics) {
+			mWaterSim->addCymaticDrops(mMFCCCoeffs, mAudioAmplitude);
+		}
 	}
 
 	// Update pattern animations

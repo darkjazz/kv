@@ -498,6 +498,30 @@ void OSCMessenger::setUpListener() {
         }
         _ogl->setEffectParams(params);
     });
+    // Water simulation / caustics / cymatics
+    _listener.setListener( "/lambda/water/drop",
+    [&]( const osc::Message &msg ){
+        // args: x y radius strength  (all normalised 0..1 except strength)
+        float x        = msg.getArgFloat(0);
+        float y        = msg.getArgFloat(1);
+        float radius   = msg.getArgFloat(2);
+        float strength = msg.getArgFloat(3);
+        _ogl->addWaterDrop(x, y, radius, strength);
+    });
+    _listener.setListener( "/lambda/water/cymatics",
+    [&]( const osc::Message &msg ){
+        bool on = msg.getArgInt32(0) == 1;
+        if (_ogl->mWaterSim) _ogl->mWaterSim->cymatics = on;
+        console() << "Cymatics: " << (on ? "on" : "off") << std::endl;
+    });
+    _listener.setListener( "/lambda/water/damping",
+    [&]( const osc::Message &msg ){
+        if (_ogl->mWaterSim) _ogl->mWaterSim->damping = msg.getArgFloat(0);
+    });
+    _listener.setListener( "/lambda/water/speed",
+    [&]( const osc::Message &msg ){
+        if (_ogl->mWaterSim) _ogl->mWaterSim->waveSpeed = msg.getArgFloat(0);
+    });
     _listener.setListener( "/lambda/framerate",
     [&]( const osc::Message &msg ){
         setFrameRate(msg.getArgFloat(0));
