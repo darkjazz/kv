@@ -141,7 +141,7 @@ void WaterSim::addCymaticDrops(const std::vector<float>& bands, float amplitude)
         timers[i] -= dt;
         if (timers[i] > 0.0f) continue;
 
-        float strength = bands[i] * amplitude * 0.18f;
+        float strength = bands[i] * amplitude * 0.04f;
         if (strength > 0.004f) {
             // Drop radius: bass bands bigger, treble bands smaller
             float t      = (float)i / 12.0f;

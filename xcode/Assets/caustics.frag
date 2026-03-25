@@ -6,58 +6,38 @@ uniform sampler2D uTexture;
 uniform sampler2D uWaterTex;
 
 uniform float uIntensity;    // Overall caustic brightness (default 1.0)
-uniform float uNormalScale;  // Amplify surface normals (default 3.0)
-uniform float uDepth;        // Projection depth — how far light travels (default 0.4)
+uniform float uNormalScale;  // Laplacian scale → caustic brightness (default 1.0)
+uniform float uDepth;        // Scene warp amount from height gradient (default 0.08)
 uniform float uWaterScale;   // Tile the water texture (default 1.0)
 uniform vec3  uColor;        // Caustic colour tint (default 1.0, 0.95, 0.82)
 
 in  vec2 TexCoord;
 out vec4 oColor;
 
-// Returns the UV where a refracted light ray originating at 'uv' lands on the floor.
-vec2 refractedUV(vec2 uv) {
-    vec2 waterUV = fract(uv * uWaterScale);
+void main() {
+    vec2 waterUV = fract(TexCoord * uWaterScale);
     float eps = 1.0 / 256.0;
 
+    // 5-tap height samples
     float h  = texture(uWaterTex, waterUV).r;
-    float hx = texture(uWaterTex, waterUV + vec2(eps, 0.0)).r;
-    float hy = texture(uWaterTex, waterUV + vec2(0.0, eps)).r;
+    float hl = texture(uWaterTex, waterUV - vec2(eps, 0.0)).r;
+    float hr = texture(uWaterTex, waterUV + vec2(eps, 0.0)).r;
+    float hd = texture(uWaterTex, waterUV - vec2(0.0, eps)).r;
+    float hu = texture(uWaterTex, waterUV + vec2(0.0, eps)).r;
 
-    // Surface normal from finite differences
-    vec3 N = normalize(vec3(-(hx - h) * uNormalScale,
-                             1.0,
-                            -(hy - h) * uNormalScale));
+    // Gradient: use to warp scene UV (simulates looking through rippled water)
+    vec2 grad  = vec2(hr - hl, hu - hd) * uDepth * 8.0;
+    vec2 sceneUV = clamp(TexCoord + grad, 0.001, 0.999);
+    vec4 scene = texture(uTexture, sceneUV);
 
-    // Refract straight-down incident ray through the surface (air→water, ratio 0.75)
-    vec3 R = refract(vec3(0.0, -1.0, 0.0), N, 0.75);
+    // Laplacian of the height field — positive = concave surface = focuses light
+    float lap = (hl + hr + hd + hu) - 4.0 * h;
 
-    // XZ offset of the refracted ray projected to a floor at distance uDepth
-    return uv + R.xz * uDepth;
-}
+    // Only concave areas produce bright caustics; Reinhard prevents blowout
+    float caustic = max(lap * uNormalScale * 250.0, 0.0);
+    caustic = caustic / (caustic + 1.0);   // Reinhard: always in [0, 1)
+    caustic *= uIntensity;
 
-void main() {
-    vec4 scene = texture(uTexture, TexCoord);
-
-    // Distorted UV for this pixel
-    vec2 distUV = refractedUV(TexCoord);
-
-    // Screen-space Jacobian of the distortion map
-    vec2 dx = dFdx(distUV);
-    vec2 dy = dFdy(distUV);
-    float distortedArea = abs(dx.x * dy.y - dx.y * dy.x);
-
-    // Reference: undistorted UV screen-space area
-    vec2 udx = dFdx(TexCoord);
-    vec2 udy = dFdy(TexCoord);
-    float originalArea = abs(udx.x * udy.y - udx.y * udy.x);
-
-    // Bright where rays converge (small distorted area relative to original).
-    // Subtract 1 so flat water contributes nothing; clamp negatives.
-    float caustic = originalArea / max(distortedArea, originalArea * 0.05) - 1.0;
-    caustic = max(caustic, 0.0);
-    caustic = pow(caustic, 1.4);  // Sharpen hot spots
-    caustic *= uIntensity * 0.12;
-
-    oColor   = scene + vec4(uColor * caustic, 0.0);
+    oColor   = scene + vec4(uColor * caustic * 0.45, 0.0);
     oColor.a = scene.a;
 }

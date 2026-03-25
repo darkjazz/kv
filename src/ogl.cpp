@@ -415,8 +415,8 @@ void GraphicsRenderer::setEffect(const std::string& type, bool enabled) {
 	}
 	else if (type == "caustics") {
 		mCurrentEffect = EFFECT_CAUSTICS;
-		// params: [intensity, normalScale, depth, waterScale, r, g, b]
-		mEffectParams = {1.0f, 3.0f, 0.4f, 1.0f, 1.0f, 0.95f, 0.82f};
+		// params: [intensity, normalScale, depth(warp), waterScale, r, g, b]
+		mEffectParams = {1.0f, 1.0f, 0.08f, 1.0f, 1.0f, 0.95f, 0.82f};
 		console() << "Caustics effect enabled" << std::endl;
 	}
 	else {
