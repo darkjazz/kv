@@ -351,9 +351,9 @@ void WaterScene::draw(const CameraPersp&) {
     // Step 1: project refracted light to caustic FBO (no camera needed)
     renderCausticFbo();
 
-    // Step 2: clear the screen and draw pool with the dedicated pool camera.
-    // This replaces the CA world view when the pool is active.
-    gl::clear(Color(0, 0, 0));
+    // Step 2: clear colour AND depth — depth buffer still has CA world values
+    // from this frame; without clearing depth the pool surfaces fail the test.
+    gl::clear(ColorA(0, 0, 0, 1), true);
     gl::ScopedDepth depthScope(true);
 
     gl::ScopedMatrices matScope;
