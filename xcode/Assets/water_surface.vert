@@ -19,16 +19,16 @@ void main() {
     float wz = (uv.y - 0.5) * 2.0 * uPoolSize;
 
     // Height displacement (explicit LOD in vertex stage)
-    float h = textureLod(uHeightTex, uv, 0.0).r * uHeightScale;
+    float h = texture(uHeightTex, uv).r * uHeightScale;
 
     vWorldPos = vec3(wx, h, wz);
 
     // Normal from gradient
     float eps = 1.0 / 128.0;
-    float hR  = textureLod(uHeightTex, uv + vec2(eps, 0.0), 0.0).r * uHeightScale;
-    float hL  = textureLod(uHeightTex, uv - vec2(eps, 0.0), 0.0).r * uHeightScale;
-    float hU  = textureLod(uHeightTex, uv + vec2(0.0, eps), 0.0).r * uHeightScale;
-    float hD  = textureLod(uHeightTex, uv - vec2(0.0, eps), 0.0).r * uHeightScale;
+    float hR  = texture(uHeightTex, uv + vec2(eps, 0.0)).r * uHeightScale;
+    float hL  = texture(uHeightTex, uv - vec2(eps, 0.0)).r * uHeightScale;
+    float hU  = texture(uHeightTex, uv + vec2(0.0, eps)).r * uHeightScale;
+    float hD  = texture(uHeightTex, uv - vec2(0.0, eps)).r * uHeightScale;
 
     vNormal = normalize(vec3(
         (hL - hR) * uNormalScale,

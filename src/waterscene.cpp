@@ -175,24 +175,25 @@ void WaterScene::setup(float pSize, int simRes, int causticRes, int meshRes) {
         }
     }
 
-    // Shaders
-    try {
-        mCausticShader = gl::GlslProg::create(
-            app::loadAsset("water_caustic.vert"),
-            app::loadAsset("water_caustic.frag")
-        );
-        mPoolShader = gl::GlslProg::create(
-            app::loadAsset("pool.vert"),
-            app::loadAsset("pool.frag")
-        );
-        mSurfaceShader = gl::GlslProg::create(
-            app::loadAsset("water_surface.vert"),
-            app::loadAsset("water_surface.frag")
-        );
-        console() << "WaterScene: shaders loaded" << std::endl;
-    }
-    catch (const std::exception& e) {
-        console() << "WaterScene: shader load failed: " << e.what() << std::endl;
+    // Shaders — load each separately so failures are identified precisely
+    auto loadShader = [&](const char* vert, const char* frag) -> gl::GlslProgRef {
+        try {
+            auto prog = gl::GlslProg::create(app::loadAsset(vert), app::loadAsset(frag));
+            console() << "WaterScene: loaded " << vert << std::endl;
+            return prog;
+        }
+        catch (const std::exception& e) {
+            console() << "WaterScene: FAILED " << vert << " — " << e.what() << std::endl;
+            return nullptr;
+        }
+    };
+
+    mCausticShader = loadShader("water_caustic.vert", "water_caustic.frag");
+    mPoolShader    = loadShader("pool.vert",           "pool.frag");
+    mSurfaceShader = loadShader("water_surface.vert",  "water_surface.frag");
+
+    if (!mCausticShader || !mPoolShader || !mSurfaceShader) {
+        console() << "WaterScene: aborting — shader(s) failed" << std::endl;
         return;
     }
 

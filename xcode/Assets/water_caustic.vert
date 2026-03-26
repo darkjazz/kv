@@ -20,10 +20,10 @@ void main() {
 
     // Height field normal — sample with explicit LOD (vertex stage, no auto mip)
     float eps = 1.0 / 256.0;
-    float hR  = textureLod(uHeightTex, uv + vec2(eps, 0.0), 0.0).r;
-    float hL  = textureLod(uHeightTex, uv - vec2(eps, 0.0), 0.0).r;
-    float hU  = textureLod(uHeightTex, uv + vec2(0.0, eps), 0.0).r;
-    float hD  = textureLod(uHeightTex, uv - vec2(0.0, eps), 0.0).r;
+    float hR  = texture(uHeightTex, uv + vec2(eps, 0.0)).r;
+    float hL  = texture(uHeightTex, uv - vec2(eps, 0.0)).r;
+    float hU  = texture(uHeightTex, uv + vec2(0.0, eps)).r;
+    float hD  = texture(uHeightTex, uv - vec2(0.0, eps)).r;
 
     // Y-up normal from height gradient (scale 2.0 keeps it stable when calm)
     vec3 N = normalize(vec3(
