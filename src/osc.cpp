@@ -566,14 +566,14 @@ void OSCMessenger::setUpListener() {
     });
     _listener.setListener( "/lambda/liquid/color",
     [&]( const osc::Message &msg ){
-        // args: r g b  (pool floor/wall base color)
-        _ogl->mWaterScene.poolColor = vec3(
+        // args: r g b  (water surface color)
+        _ogl->mWaterScene.waterColor = vec3(
             msg.getArgFloat(0), msg.getArgFloat(1), msg.getArgFloat(2));
     });
-    _listener.setListener( "/lambda/liquid/watercolor",
+    _listener.setListener( "/lambda/liquid/wallcolor",
     [&]( const osc::Message &msg ){
-        // args: r g b
-        _ogl->mWaterScene.waterColor = vec3(
+        // args: r g b  (pool floor/wall base color)
+        _ogl->mWaterScene.poolColor = vec3(
             msg.getArgFloat(0), msg.getArgFloat(1), msg.getArgFloat(2));
     });
 
