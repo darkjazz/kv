@@ -196,18 +196,27 @@ void WaterScene::setup(float pSize, int simRes, int causticRes, int meshRes) {
         return;
     }
 
-    // Meshes
-    mCausticMesh = buildUVGridMesh(mMeshRes);
-    mSurfaceMesh = buildUVGridMesh(mMeshRes);
-    buildFloorMesh();
-    for (int i = 0; i < 4; i++) buildWallMesh(i);
+    // Meshes and batches
+    try {
+        mCausticMesh = buildUVGridMesh(mMeshRes);
+        mSurfaceMesh = buildUVGridMesh(mMeshRes);
+        buildFloorMesh();
+        for (int i = 0; i < 4; i++) buildWallMesh(i);
 
-    // Batches (attribute binding happens here)
-    mCausticBatch = gl::Batch::create(mCausticMesh, mCausticShader);
-    mSurfaceBatch = gl::Batch::create(mSurfaceMesh, mSurfaceShader);
-    mFloorBatch   = gl::Batch::create(mFloorMesh,   mPoolShader);
-    for (int i = 0; i < 4; i++) {
-        mWallBatches[i] = gl::Batch::create(mWallMeshes[i], mPoolShader);
+        mCausticBatch = gl::Batch::create(mCausticMesh, mCausticShader);
+        console() << "WaterScene: caustic batch OK" << std::endl;
+        mSurfaceBatch = gl::Batch::create(mSurfaceMesh, mSurfaceShader);
+        console() << "WaterScene: surface batch OK" << std::endl;
+        mFloorBatch   = gl::Batch::create(mFloorMesh,   mPoolShader);
+        console() << "WaterScene: floor batch OK" << std::endl;
+        for (int i = 0; i < 4; i++) {
+            mWallBatches[i] = gl::Batch::create(mWallMeshes[i], mPoolShader);
+        }
+        console() << "WaterScene: wall batches OK" << std::endl;
+    }
+    catch (const std::exception& e) {
+        console() << "WaterScene: mesh/batch setup failed: " << e.what() << std::endl;
+        return;
     }
 
     mInitialized = true;

@@ -223,7 +223,12 @@ void GraphicsRenderer::setupOgl () {
 	mWaterSim->setup(256);
 
 	// Initialize standalone water scene (pool + caustics, evanw approach)
-	mWaterScene.setup(8.0f, 256, 512, 128);
+	try {
+		mWaterScene.setup(8.0f, 256, 512, 128);
+	}
+	catch (const std::exception& e) {
+		console() << "WaterScene setup exception: " << e.what() << std::endl;
+	}
 
 	// Initialize post-processing FBOs (including audio visualization FBOs)
 	setupPostProcessing();
