@@ -219,9 +219,22 @@ void WaterScene::setup(float pSize, int simRes, int causticRes, int meshRes) {
         return;
     }
 
+    // Dedicated camera: positioned above and in front, looking down into the pool
+    float aspect = app::getWindowAspectRatio();
+    mPoolCam.setPerspective(55.0f, aspect, 0.1f, 500.0f);
+    mPoolCam.lookAt(
+        vec3(0.0f,  mPoolSize * 1.4f, mPoolSize * 1.8f),   // eye: above-front
+        vec3(0.0f, -mPoolSize * 0.25f, 0.0f),              // look at: center of pool
+        vec3(0.0f,  1.0f, 0.0f)
+    );
+
     mInitialized = true;
     console() << "WaterScene: ready (pool=" << mPoolSize
               << " caustic=" << mCausticRes << "x" << mCausticRes << ")" << std::endl;
+}
+
+void WaterScene::reshape(float aspectRatio) {
+    mPoolCam.setAspectRatio(aspectRatio);
 }
 
 // ---------------------------------------------------------------------------
@@ -331,16 +344,20 @@ void WaterScene::drawWaterSurface(const CameraPersp& cam) {
     mSurfaceBatch->draw();
 }
 
-void WaterScene::draw(const CameraPersp& cam) {
+void WaterScene::draw(const CameraPersp&) {
     if (!mInitialized || !isVisible) return;
 
     // Step 1: project refracted light to caustic FBO (no camera needed)
     renderCausticFbo();
 
-    // Step 2: draw pool + water with scene camera
-    gl::ScopedMatrices matScope;
-    gl::setMatrices(cam);
+    // Step 2: clear the screen and draw pool with the dedicated pool camera.
+    // This replaces the CA world view when the pool is active.
+    gl::clear(Color(0, 0, 0));
+    gl::ScopedDepth depthScope(true);
 
-    if (drawPool)    drawPoolGeometry(cam);
-    if (drawSurface) drawWaterSurface(cam);
+    gl::ScopedMatrices matScope;
+    gl::setMatrices(mPoolCam);
+
+    if (drawPool)    drawPoolGeometry(mPoolCam);
+    if (drawSurface) drawWaterSurface(mPoolCam);
 }

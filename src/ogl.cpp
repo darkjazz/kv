@@ -240,6 +240,8 @@ void GraphicsRenderer::reshape() {
 	mCam.setPerspective(45.0, getWindowAspectRatio(), 0.1f, 2000.0f);
 	gl::setMatrices( mCam );
 
+	mWaterScene.reshape(getWindowAspectRatio());
+
 	// Recreate FBO on window resize if any effect is active
 	if (mCurrentEffect != EFFECT_NONE && mFbo) {
 		setupPostProcessing();

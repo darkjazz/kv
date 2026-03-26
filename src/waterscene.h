@@ -21,7 +21,10 @@ public:
     void setup(float poolSize = 8.0f, int simRes = 256,
                int causticRes = 512, int meshRes = 128);
     void update();
-    void draw(const CameraPersp& cam);
+    // cam is ignored — WaterScene uses its own dedicated camera.
+    // Call draw() with no argument or any CameraPersp.
+    void draw(const CameraPersp& cam = CameraPersp());
+    void reshape(float aspectRatio);  // call on window resize
 
     // Drop in world XZ coordinates
     void addDrop(float worldX, float worldZ, float radius, float strength);
@@ -55,8 +58,9 @@ public:
     float waveSpeed = 2.0f;
 
 private:
-    bool  mInitialized = false;
-    float mPoolSize    = 8.0f;
+    bool        mInitialized = false;
+    float       mPoolSize    = 8.0f;
+    CameraPersp mPoolCam;             // dedicated camera, angled above the pool
     int   mMeshRes     = 128;
     int   mCausticRes  = 512;
 
