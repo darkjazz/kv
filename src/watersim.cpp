@@ -44,10 +44,13 @@ void WaterSim::setup(int size) {
         mSimFbo[0] = gl::Fbo::create(mSize, mSize, fboFmt);
         mSimFbo[1] = gl::Fbo::create(mSize, mSize, fboFmt);
 
-        // Clear both to zero (calm water)
+        // Clear both to zero (calm water).
+        // Must use glClearBufferfv for RGBA32F — glClear leaves float FBOs undefined.
+        // Alpha=1 so blending (if accidentally active) doesn't zero out writes.
+        const float zeros[4] = {0.0f, 0.0f, 0.0f, 1.0f};
         for (int i = 0; i < 2; i++) {
             gl::ScopedFramebuffer fboScope(mSimFbo[i]);
-            gl::clear(Color(0, 0, 0));
+            glClearBufferfv(GL_COLOR, 0, zeros);
         }
         console() << "WaterSim: FBOs created (" << mSize << "x" << mSize << ")" << std::endl;
     }
@@ -86,6 +89,7 @@ void WaterSim::update() {
     gl::ScopedMatrices    matScope;
     gl::setMatrices(CameraOrtho(-1, 1, -1, 1, -1, 1));
     gl::ScopedDepth       depthScope(false);
+    gl::ScopedBlend       blendOff(false);   // compute pass — blending must be off
 
     gl::ScopedTextureBind texScope(mSimFbo[mCurrent]->getColorTexture(), 0);
     gl::ScopedGlslProg    shaderScope(mUpdateShader);
@@ -111,6 +115,7 @@ void WaterSim::addDrop(float x, float y, float radius, float strength) {
     gl::ScopedMatrices    matScope;
     gl::setMatrices(CameraOrtho(-1, 1, -1, 1, -1, 1));
     gl::ScopedDepth       depthScope(false);
+    gl::ScopedBlend       blendOff(false);   // compute pass — blending must be off
 
     gl::ScopedTextureBind texScope(mSimFbo[mCurrent]->getColorTexture(), 0);
     gl::ScopedGlslProg    shaderScope(mDropShader);
@@ -158,4 +163,16 @@ void WaterSim::addCymaticDrops(const std::vector<float>& bands, float amplitude)
 gl::TextureRef WaterSim::getHeightTexture() {
     if (!mInitialized) return nullptr;
     return mSimFbo[mCurrent]->getColorTexture();
+}
+
+float WaterSim::readHeightAt(float u, float v) {
+    if (!mInitialized) return 0.0f;
+    int px = (int)(u * mSize);
+    int py = (int)(v * mSize);
+    px = glm::clamp(px, 0, mSize - 1);
+    py = glm::clamp(py, 0, mSize - 1);
+    float pixel[4] = {};
+    gl::ScopedFramebuffer fboScope(mSimFbo[mCurrent]);
+    glReadPixels(px, py, 1, 1, GL_RGBA, GL_FLOAT, pixel);
+    return pixel[0];  // R = height
 }

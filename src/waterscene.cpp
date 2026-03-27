@@ -9,14 +9,23 @@ using namespace ci::app;
 // Mesh helpers
 // ---------------------------------------------------------------------------
 
-// Build an (N+1)×(N+1) UV grid as a triangle mesh.
-// Attribute: ciTexCoord0 (geom::TEX_COORD_0) — vec2, row-major.
+// Interleaved vertex for the UV grid: world XZ position + UV.
+struct SurfaceVertex {
+    vec3 pos;  // (wx, 0, wz) — world space, Y displaced by shader
+    vec2 uv;   // [0,1]^2, matches addDrop() UV convention
+};
+
+// Build an (N+1)×(N+1) grid with POSITION (world XZ) + TEX_COORD_0 (UV).
 gl::VboMeshRef WaterScene::buildUVGridMesh(int N) {
-    std::vector<vec2> uvs;
-    uvs.reserve((N + 1) * (N + 1));
+    std::vector<SurfaceVertex> verts;
+    verts.reserve((N + 1) * (N + 1));
     for (int j = 0; j <= N; j++) {
         for (int i = 0; i <= N; i++) {
-            uvs.push_back(vec2(i / (float)N, j / (float)N));
+            float u  = i / (float)N;
+            float v  = j / (float)N;
+            float wx = (u - 0.5f) * 2.0f * mPoolSize;
+            float wz = (v - 0.5f) * 2.0f * mPoolSize;
+            verts.push_back({ vec3(wx, 0.0f, wz), vec2(u, v) });
         }
     }
 
@@ -34,17 +43,18 @@ gl::VboMeshRef WaterScene::buildUVGridMesh(int N) {
     }
 
     auto vbo = gl::Vbo::create(GL_ARRAY_BUFFER,
-                               uvs.size() * sizeof(vec2),
-                               uvs.data(), GL_STATIC_DRAW);
+                               verts.size() * sizeof(SurfaceVertex),
+                               verts.data(), GL_STATIC_DRAW);
     auto ibo = gl::Vbo::create(GL_ELEMENT_ARRAY_BUFFER,
                                indices.size() * sizeof(uint32_t),
                                indices.data(), GL_STATIC_DRAW);
 
     geom::BufferLayout layout;
-    layout.append(geom::Attrib::TEX_COORD_0, 2, sizeof(vec2), 0);
+    layout.append(geom::Attrib::POSITION,    3, sizeof(SurfaceVertex), offsetof(SurfaceVertex, pos));
+    layout.append(geom::Attrib::TEX_COORD_0, 2, sizeof(SurfaceVertex), offsetof(SurfaceVertex, uv));
 
     return gl::VboMesh::create(
-        (uint32_t)uvs.size(), GL_TRIANGLES,
+        (uint32_t)verts.size(), GL_TRIANGLES,
         { { layout, vbo } },
         (uint32_t)indices.size(), GL_UNSIGNED_INT, ibo
     );
@@ -167,7 +177,8 @@ void WaterScene::setup(float pSize, int simRes, int causticRes, int meshRes) {
         try {
             mCausticFbo = gl::Fbo::create(mCausticRes, mCausticRes, fboFmt);
             gl::ScopedFramebuffer fboScope(mCausticFbo);
-            gl::clear(Color(0, 0, 0));
+            const float zeros[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            glClearBufferfv(GL_COLOR, 0, zeros);
         }
         catch (const std::exception& e) {
             console() << "WaterScene: caustic FBO failed: " << e.what() << std::endl;
@@ -199,14 +210,17 @@ void WaterScene::setup(float pSize, int simRes, int causticRes, int meshRes) {
 
     // Meshes and batches
     try {
-        mCausticMesh = buildUVGridMesh(mMeshRes);
-        mSurfaceMesh = buildUVGridMesh(mMeshRes);
+        // Use Cinder's geom::Plane for surface and caustic — correct POSITION+TEX_COORD_0 pipeline
+        auto poolPlane = geom::Plane()
+            .size(vec2(mPoolSize * 2.0f, mPoolSize * 2.0f))
+            .subdivisions(ivec2(mMeshRes, mMeshRes));
+
         buildFloorMesh();
         for (int i = 0; i < 4; i++) buildWallMesh(i);
 
-        mCausticBatch = gl::Batch::create(mCausticMesh, mCausticShader);
+        mCausticBatch = gl::Batch::create(poolPlane, mCausticShader);
         console() << "WaterScene: caustic batch OK" << std::endl;
-        mSurfaceBatch = gl::Batch::create(mSurfaceMesh, mSurfaceShader);
+        mSurfaceBatch = gl::Batch::create(poolPlane, mSurfaceShader);
         console() << "WaterScene: surface batch OK" << std::endl;
         mFloorBatch   = gl::Batch::create(mFloorMesh,   mPoolShader);
         console() << "WaterScene: floor batch OK" << std::endl;
@@ -245,6 +259,37 @@ void WaterScene::reshape(float aspectRatio) {
 void WaterScene::update() {
     if (!mInitialized) return;
 
+    // Drain pending drops queued from OSC thread — GL must run on render thread
+    {
+        std::lock_guard<std::mutex> lock(mDropMutex);
+        for (auto& d : mPendingDrops) {
+            float u   = d.worldX / mPoolSize * 0.5f + 0.5f;
+            float v   = d.worldZ / mPoolSize * 0.5f + 0.5f;
+            float rUV = d.radius / (2.0f * mPoolSize);
+            mWaterSim.addDrop(u, v, rUV, d.strength);
+        }
+        mPendingDrops.clear();
+    }
+
+    // Diagnostic auto-drop: ensures animation is visible even without OSC
+    if (autoDrop) {
+        static float lastAutoDrop = 0.0f;
+        float now = (float)app::getElapsedSeconds();
+        if (now - lastAutoDrop > 2.0f) {
+            static int autoDropIdx = 0;
+            const float pts[4][2] = { {0.5f,0.5f}, {0.3f,0.7f}, {0.7f,0.3f}, {0.4f,0.6f} };
+            int i = autoDropIdx++ % 4;
+            mWaterSim.addDrop(pts[i][0], pts[i][1], 0.03f, 0.8f);
+            console() << "WaterScene: autoDrop #" << autoDropIdx
+                      << " uv=(" << pts[i][0] << "," << pts[i][1] << ")" << std::endl;
+            lastAutoDrop = now;
+
+            // CPU readback: confirm height is non-zero right after drop
+            float h = mWaterSim.readHeightAt(pts[i][0], pts[i][1]);
+            console() << "WaterScene: center height after drop = " << h << std::endl;
+        }
+    }
+
     // Sync controllable params to the inner sim
     mWaterSim.damping   = damping;
     mWaterSim.waveSpeed = waveSpeed;
@@ -258,12 +303,9 @@ void WaterScene::update() {
 
 void WaterScene::addDrop(float worldX, float worldZ, float radius, float strength) {
     if (!mInitialized) return;
-    // Convert world XZ → simulation UV [0,1]
-    float u = worldX / mPoolSize * 0.5f + 0.5f;
-    float v = worldZ / mPoolSize * 0.5f + 0.5f;
-    // Clamp radius from world units to UV fraction
-    float rUV = radius / (2.0f * mPoolSize);
-    mWaterSim.addDrop(u, v, rUV, strength);
+    // Queue for the render thread — this may be called from OSC background thread
+    std::lock_guard<std::mutex> lock(mDropMutex);
+    mPendingDrops.push_back({worldX, worldZ, radius, strength});
 }
 
 void WaterScene::addCymaticDrops(const std::vector<float>& bands, float amplitude) {
@@ -284,8 +326,9 @@ void WaterScene::renderCausticFbo() {
     gl::ScopedDepth       depthOff(false);
     gl::ScopedMatrices    matScope;
 
-    // Small ambient fill so pool looks lit even on calm water
-    gl::clear(ColorA(0.04f, 0.04f, 0.04f, 1.0f));
+    // Small ambient fill — must use glClearBufferfv for RGBA32F on macOS
+    const float ambient[4] = {0.04f, 0.04f, 0.04f, 1.0f};
+    glClearBufferfv(GL_COLOR, 0, ambient);
 
     // Additive blending: caustic brightness accumulates
     gl::ScopedBlend blend(GL_ONE, GL_ONE);
@@ -293,10 +336,11 @@ void WaterScene::renderCausticFbo() {
     gl::ScopedTextureBind texBind(heightTex, 0);
     gl::ScopedGlslProg    shaderScope(mCausticShader);
 
-    mCausticShader->uniform("uHeightTex",   0);
-    mCausticShader->uniform("uPoolSize",    mPoolSize);
-    mCausticShader->uniform("uNormalScale", normalScale);
+    mCausticShader->uniform("uHeightTex",    0);
+    mCausticShader->uniform("uPoolSize",     mPoolSize);
+    mCausticShader->uniform("uNormalScale",  normalScale);
     mCausticShader->uniform("uCausticScale", causticScale);
+    mCausticShader->uniform("uLightDir",     glm::normalize(lightDir));
 
     mCausticBatch->draw();
 }
@@ -329,13 +373,15 @@ void WaterScene::drawWaterSurface(const CameraPersp& cam) {
     auto heightTex = mWaterSim.getHeightTexture();
     if (!heightTex) return;
 
+    // Disable face culling — geom::Plane winding may be back-face from above
+    gl::disable(GL_CULL_FACE);
+
     gl::ScopedTextureBind texBind(heightTex, 0);
     gl::ScopedGlslProg    shaderScope(mSurfaceShader);
     gl::ScopedDepth       depthOn(true);
     gl::ScopedBlend       blend(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     mSurfaceShader->uniform("uHeightTex",   0);
-    mSurfaceShader->uniform("uPoolSize",    mPoolSize);
     mSurfaceShader->uniform("uHeightScale", heightScale);
     mSurfaceShader->uniform("uNormalScale", normalScale);
     mSurfaceShader->uniform("uWaterColor",  waterColor);
@@ -343,16 +389,28 @@ void WaterScene::drawWaterSurface(const CameraPersp& cam) {
     mSurfaceShader->uniform("uCameraPos",   cam.getEyePoint());
 
     mSurfaceBatch->draw();
+
+    static int surfaceDrawCount = 0;
+    if (++surfaceDrawCount % 120 == 1) {
+        console() << "WaterScene: surface drawn cam=" << cam.getEyePoint()
+                  << " color=" << waterColor << " alpha=" << waterAlpha << std::endl;
+    }
 }
 
 void WaterScene::draw(const CameraPersp&) {
     if (!mInitialized || !isVisible) return;
 
+    // Ensure clean GL state — other draw paths may leave face culling or
+    // unexpected depth state that would hide the water surface.
+    gl::disable(GL_CULL_FACE);
+
+    // Apply current camera (may be updated live via OSC)
+    mPoolCam.lookAt(cameraEye, cameraTarget, vec3(0, 1, 0));
+
     // Step 1: project refracted light to caustic FBO (no camera needed)
     renderCausticFbo();
 
-    // Step 2: clear colour AND depth — depth buffer still has CA world values
-    // from this frame; without clearing depth the pool surfaces fail the test.
+    // Step 2: clear colour AND depth
     gl::clear(ColorA(0, 0, 0, 1), true);
     gl::ScopedDepth depthScope(true);
 
@@ -361,4 +419,5 @@ void WaterScene::draw(const CameraPersp&) {
 
     if (drawPool)    drawPoolGeometry(mPoolCam);
     if (drawSurface) drawWaterSurface(mPoolCam);
+    else console() << "WaterScene: drawSurface=false, surface skipped" << std::endl;
 }

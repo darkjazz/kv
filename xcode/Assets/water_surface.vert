@@ -1,29 +1,25 @@
 #version 150
 
-// UV grid position on water surface [0,1]^2
-in vec2 ciTexCoord0;
+in vec4 ciPosition;   // world space: (wx, 0, wz)
+in vec2 ciTexCoord0;  // UV [0,1]^2 for height texture lookup
 
 uniform sampler2D uHeightTex;
-uniform mat4      ciModelViewProjection;  // Cinder supplies P*V (model=identity)
-uniform float     uPoolSize;
-uniform float     uHeightScale;   // visual displacement scale (default 0.5)
-uniform float     uNormalScale;   // gradient to normal scale
+uniform mat4      ciModelViewProjection;
+uniform float     uHeightScale;
+uniform float     uNormalScale;
 
 out vec3 vWorldPos;
 out vec3 vNormal;
 
 void main() {
-    vec2 uv = ciTexCoord0;
+    float wx = ciPosition.x;
+    float wz = ciPosition.z;
+    vec2  uv = ciTexCoord0;
 
-    float wx = (uv.x - 0.5) * 2.0 * uPoolSize;
-    float wz = (uv.y - 0.5) * 2.0 * uPoolSize;
-
-    // Height displacement (explicit LOD in vertex stage)
     float h = texture(uHeightTex, uv).r * uHeightScale;
 
     vWorldPos = vec3(wx, h, wz);
 
-    // Normal from gradient
     float eps = 1.0 / 128.0;
     float hR  = texture(uHeightTex, uv + vec2(eps, 0.0)).r * uHeightScale;
     float hL  = texture(uHeightTex, uv - vec2(eps, 0.0)).r * uHeightScale;

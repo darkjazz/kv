@@ -4,6 +4,7 @@
 #include "watersim.h"
 #include <vector>
 #include <array>
+#include <mutex>
 
 using namespace ci;
 
@@ -41,21 +42,31 @@ public:
     float poolAmbient     = 0.18f;
 
     // Water surface
-    vec3  waterColor      = { 0.10f, 0.38f, 0.65f };
-    float waterAlpha      = 0.60f;
-    float heightScale     = 0.40f;   // visual displacement of surface mesh
+    vec3  waterColor      = { 0.0f, 0.6f, 1.0f };
+    float waterAlpha      = 0.72f;
+    float heightScale     = 2.0f;    // visual displacement of surface mesh
     bool  drawSurface     = true;
     bool  drawPool        = true;
 
     // Caustics
-    float causticStrength = 0.9f;
+    float causticStrength = 0.45f;
     float causticScale    = 1.2f;    // oldArea/newArea multiplier
     float normalScale     = 8.0f;    // height gradient → surface normal magnitude
+
+    // Camera — updated every frame in draw()
+    vec3  cameraEye    = { 0.0f, 11.2f, 14.4f };
+    vec3  cameraTarget = { 0.0f, -2.0f,  0.0f };
+
+    // Caustic light direction (world space, need not be normalised)
+    vec3  lightDir  = { 0.2f, -1.0f, 0.2f };
+
+    // Diagnostic: fire a drop every 2s so waves are visible without OSC
+    bool  autoDrop  = true;
 
     // WaterSim passthrough
     bool  cymatics  = false;
     float damping   = 0.995f;
-    float waveSpeed = 2.0f;
+    float waveSpeed = 0.5f;   // 2.0 was at the stability boundary → Nyquist oscillation
 
 private:
     bool        mInitialized = false;
@@ -65,6 +76,11 @@ private:
     int   mCausticRes  = 512;
 
     WaterSim mWaterSim;
+
+    // Thread-safe drop queue (OSC callbacks run on background thread)
+    struct PendingDrop { float worldX, worldZ, radius, strength; };
+    std::vector<PendingDrop> mPendingDrops;
+    std::mutex               mDropMutex;
 
     // Caustic projection (top-down, additive)
     gl::FboRef      mCausticFbo;

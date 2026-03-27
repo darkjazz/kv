@@ -16,6 +16,9 @@ public:
     gl::TextureRef getHeightTexture();
     bool isReady() const { return mInitialized; }
 
+    // Read the height value at a UV position (0-1) — CPU readback, use sparingly
+    float readHeightAt(float u, float v);
+
     // Controllable parameters
     bool   cymatics  = false;
     float  damping   = 0.995f;

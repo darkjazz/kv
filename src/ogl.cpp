@@ -1304,10 +1304,10 @@ void GraphicsRenderer::update() {
 		// Get window size for display debugging
 		ivec2 windowSize = getWindowSize();
 
-		console() << "FPS: " << mCurrentFps
-		          << " | Alive: " << ptrWorld->alive()
-		          << " | Resolution: " << windowSize.x << "x" << windowSize.y
-		          << " | Audio: " << mAudioAmplitude << std::endl;
+		// console() << "FPS: " << mCurrentFps
+		//           << " | Alive: " << ptrWorld->alive()
+		//           << " | Resolution: " << windowSize.x << "x" << windowSize.y
+		//           << " | Audio: " << mAudioAmplitude << std::endl;
 		mFrameCount = 0;
 		mFpsLastTime = currentTime;
 	}

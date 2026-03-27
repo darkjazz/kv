@@ -19,9 +19,14 @@ void main() {
     vec3 caustic = texture(uCausticTex, cUV).rgb;
 
     // Diffuse from overhead light (0,1,0)
-    float diff = max(dot(normalize(vNormal), vec3(0.0, 1.0, 0.0)), 0.0);
+    vec3  N    = normalize(vNormal);
+    float diff = max(dot(N, vec3(0.0, 1.0, 0.0)), 0.0);
     float light = uAmbient + (1.0 - uAmbient) * diff;
 
-    vec3 color = uPoolColor * light + caustic * uCausticStrength;
+    // Caustics are projected top-down so only upward-facing surfaces receive them.
+    // Vertical walls get none; floor gets full caustic contribution.
+    float causticFactor = max(dot(N, vec3(0.0, 1.0, 0.0)), 0.0);
+
+    vec3 color = uPoolColor * light + caustic * uCausticStrength * causticFactor;
     oColor = vec4(color, 1.0);
 }

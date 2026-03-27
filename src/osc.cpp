@@ -528,7 +528,21 @@ void OSCMessenger::setUpListener() {
     [&]( const osc::Message &msg ){
         bool on = msg.getArgInt32(0) == 1;
         _ogl->mWaterScene.isVisible = on;
+        if (on) {
+            _ogl->mWaterScene.drawPool    = true;
+            _ogl->mWaterScene.drawSurface = true;
+        }
         console() << "WaterScene: " << (on ? "visible" : "hidden") << std::endl;
+    });
+    _listener.setListener( "/lambda/liquid/camera",
+    [&]( const osc::Message &msg ){
+        // args: eyeX eyeY eyeZ  (optional: targetX targetY targetZ)
+        _ogl->mWaterScene.cameraEye = vec3(
+            msg.getArgFloat(0), msg.getArgFloat(1), msg.getArgFloat(2));
+        if (msg.getNumArgs() >= 6) {
+            _ogl->mWaterScene.cameraTarget = vec3(
+                msg.getArgFloat(3), msg.getArgFloat(4), msg.getArgFloat(5));
+        }
     });
     _listener.setListener( "/lambda/liquid/drop",
     [&]( const osc::Message &msg ){
@@ -537,6 +551,7 @@ void OSCMessenger::setUpListener() {
         float z = msg.getArgFloat(1);
         float r = msg.getArgFloat(2);
         float s = msg.getArgFloat(3);
+        console() << "liquid/drop x=" << x << " z=" << z << " r=" << r << " s=" << s << std::endl;
         _ogl->mWaterScene.addDrop(x, z, r, s);
     });
     _listener.setListener( "/lambda/liquid/cymatics",
@@ -575,6 +590,16 @@ void OSCMessenger::setUpListener() {
         // args: r g b  (pool floor/wall base color)
         _ogl->mWaterScene.poolColor = vec3(
             msg.getArgFloat(0), msg.getArgFloat(1), msg.getArgFloat(2));
+    });
+    _listener.setListener( "/lambda/liquid/light",
+    [&]( const osc::Message &msg ){
+        // args: x y z  (world-space light direction for caustics; y should be negative)
+        _ogl->mWaterScene.lightDir = vec3(
+            msg.getArgFloat(0), msg.getArgFloat(1), msg.getArgFloat(2));
+    });
+    _listener.setListener( "/lambda/liquid/autoDrop",
+    [&]( const osc::Message &msg ){
+        _ogl->mWaterScene.autoDrop = msg.getArgInt32(0) == 1;
     });
 
     _listener.setListener( "/lambda/framerate",
