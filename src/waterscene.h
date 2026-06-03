@@ -31,6 +31,7 @@ public:
     void addDrop(float worldX, float worldZ, float radius, float strength);
     void addCymaticDrops(const std::vector<float>& bands, float amplitude);
 
+
     bool isReady() const { return mInitialized; }
 
     // --- Visible knobs ---
@@ -39,7 +40,7 @@ public:
     // Pool geometry
     float poolSize        = 8.0f;
     vec3  poolColor       = { 0.06f, 0.07f, 0.10f };
-    float poolAmbient     = 0.18f;
+    float poolAmbient     = 0.35f;
 
     // Water surface
     vec3  waterColor      = { 0.0f, 0.6f, 1.0f };
@@ -61,12 +62,15 @@ public:
     vec3  lightDir  = { 0.2f, -1.0f, 0.2f };
 
     // Diagnostic: fire a drop every 2s so waves are visible without OSC
-    bool  autoDrop  = true;
+    bool  autoDrop  = false;
 
     // WaterSim passthrough
-    bool  cymatics  = false;
-    float damping   = 0.995f;
-    float waveSpeed = 0.5f;   // 2.0 was at the stability boundary → Nyquist oscillation
+    bool  cymatics      = false;
+    float damping       = 0.995f;
+    float waveSpeed     = 0.5f;   // 2.0 was at the stability boundary → Nyquist oscillation
+    float cymaticJitter = 0.5f;   // spatial randomness around walker positions
+    float cymaticGain   = 0.2f;   // drop strength multiplier
+    float cymaticRadius = 0.15f;  // max distance walkers roam from center (0=center, 0.45=full pool)
 
 private:
     bool        mInitialized = false;

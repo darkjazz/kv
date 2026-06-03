@@ -1,4 +1,5 @@
 #include "waterscene.h"
+#include "util.h"
 #include "cinder/app/App.h"
 #include "cinder/GeomIo.h"
 
@@ -277,9 +278,14 @@ void WaterScene::update() {
         float now = (float)app::getElapsedSeconds();
         if (now - lastAutoDrop > 2.0f) {
             static int autoDropIdx = 0;
-            const float pts[4][2] = { {0.5f,0.5f}, {0.3f,0.7f}, {0.7f,0.3f}, {0.4f,0.6f} };
+            const float pts[4][2] = {
+                {randfloat(0.1f, 0.9f), randfloat(0.1f, 0.9f)},
+                {randfloat(0.1f, 0.9f), randfloat(0.1f, 0.9f)},
+                {randfloat(0.1f, 0.9f), randfloat(0.1f, 0.9f)},
+                {randfloat(0.1f, 0.9f), randfloat(0.1f, 0.9f)}
+            };
             int i = autoDropIdx++ % 4;
-            mWaterSim.addDrop(pts[i][0], pts[i][1], 0.03f, 0.8f);
+            mWaterSim.addDrop(pts[i][0], pts[i][1], 0.03f, randfloat(0.1f, 0.8f));
             console() << "WaterScene: autoDrop #" << autoDropIdx
                       << " uv=(" << pts[i][0] << "," << pts[i][1] << ")" << std::endl;
             lastAutoDrop = now;
@@ -291,8 +297,11 @@ void WaterScene::update() {
     }
 
     // Sync controllable params to the inner sim
-    mWaterSim.damping   = damping;
-    mWaterSim.waveSpeed = waveSpeed;
+    mWaterSim.damping       = damping;
+    mWaterSim.waveSpeed     = waveSpeed;
+    mWaterSim.cymaticJitter = cymaticJitter;
+    mWaterSim.cymaticGain   = cymaticGain;
+    mWaterSim.cymaticRadius = cymaticRadius;
 
     mWaterSim.update();
 }
@@ -357,11 +366,12 @@ void WaterScene::drawPoolGeometry(const CameraPersp& cam) {
     gl::ScopedGlslProg    shaderScope(mPoolShader);
     gl::ScopedDepth       depthOn(true);
 
-    mPoolShader->uniform("uCausticTex",     0);
-    mPoolShader->uniform("uPoolColor",      poolColor);
-    mPoolShader->uniform("uPoolSize",       mPoolSize);
+    mPoolShader->uniform("uCausticTex",      0);
+    mPoolShader->uniform("uPoolColor",       poolColor);
+    mPoolShader->uniform("uPoolSize",        mPoolSize);
     mPoolShader->uniform("uCausticStrength", causticStrength);
-    mPoolShader->uniform("uAmbient",        poolAmbient);
+    mPoolShader->uniform("uAmbient",         poolAmbient);
+    mPoolShader->uniform("uLightDir",        glm::normalize(lightDir));
 
     mFloorBatch->draw();
     for (int i = 0; i < 4; i++) {
@@ -410,8 +420,6 @@ void WaterScene::draw(const CameraPersp&) {
     // Step 1: project refracted light to caustic FBO (no camera needed)
     renderCausticFbo();
 
-    // Step 2: clear colour AND depth
-    gl::clear(ColorA(0, 0, 0, 1), true);
     gl::ScopedDepth depthScope(true);
 
     gl::ScopedMatrices matScope;

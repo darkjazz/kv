@@ -557,6 +557,19 @@ void OSCMessenger::setUpListener() {
     _listener.setListener( "/lambda/liquid/cymatics",
     [&]( const osc::Message &msg ){
         _ogl->mWaterScene.cymatics = msg.getArgInt32(0) == 1;
+        if (msg.getNumArgs() > 1) _ogl->mWaterScene.cymaticJitter = msg.getArgFloat(1);
+    });
+    _listener.setListener( "/lambda/liquid/jitter",
+    [&]( const osc::Message &msg ){
+        _ogl->mWaterScene.cymaticJitter = msg.getArgFloat(0);
+    });
+    _listener.setListener( "/lambda/liquid/gain",
+    [&]( const osc::Message &msg ){
+        _ogl->mWaterScene.cymaticGain = msg.getArgFloat(0);
+    });
+    _listener.setListener( "/lambda/liquid/radius",
+    [&]( const osc::Message &msg ){
+        _ogl->mWaterScene.cymaticRadius = msg.getArgFloat(0);
     });
     _listener.setListener( "/lambda/liquid/damping",
     [&]( const osc::Message &msg ){

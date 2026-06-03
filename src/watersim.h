@@ -20,9 +20,12 @@ public:
     float readHeightAt(float u, float v);
 
     // Controllable parameters
-    bool   cymatics  = false;
-    float  damping   = 0.995f;
-    float  waveSpeed = 2.0f;
+    bool   cymatics      = false;
+    float  damping       = 0.995f;
+    float  waveSpeed     = 2.0f;
+    float  cymaticJitter = 0.5f;  // spatial randomness around walker positions
+    float  cymaticGain   = 0.2f;  // drop strength multiplier
+    float  cymaticRadius = 0.15f; // max distance walkers roam from center (0=center, 0.45=full pool)
 
 private:
     int            mSize    = 256;
