@@ -299,9 +299,10 @@ void WaterScene::update() {
     // Sync controllable params to the inner sim
     mWaterSim.damping       = damping;
     mWaterSim.waveSpeed     = waveSpeed;
-    mWaterSim.cymaticJitter = cymaticJitter;
-    mWaterSim.cymaticGain   = cymaticGain;
-    mWaterSim.cymaticRadius = cymaticRadius;
+    mWaterSim.cymaticJitter    = cymaticJitter;
+    mWaterSim.cymaticGain      = cymaticGain;
+    mWaterSim.cymaticRadius    = cymaticRadius;
+    mWaterSim.boundaryForcing  = cornerMode;
 
     mWaterSim.update();
 }
@@ -320,6 +321,18 @@ void WaterScene::addDrop(float worldX, float worldZ, float radius, float strengt
 void WaterScene::addCymaticDrops(const std::vector<float>& bands, float amplitude) {
     if (!mInitialized) return;
     mWaterSim.addCymaticDrops(bands, amplitude);
+}
+
+void WaterScene::addCornerDrops(float sub, float low, float mid, float high) {
+    if (!mInitialized) return;
+    mWaterSim.addCornerDrops(sub, low, mid, high);
+}
+
+void WaterScene::setBoundaryValues(float sub, float low, float mid, float high) {
+    mWaterSim.boundaryValues[0] = sub;
+    mWaterSim.boundaryValues[1] = low;
+    mWaterSim.boundaryValues[2] = mid;
+    mWaterSim.boundaryValues[3] = high;
 }
 
 // ---------------------------------------------------------------------------

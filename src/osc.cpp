@@ -559,6 +559,10 @@ void OSCMessenger::setUpListener() {
         _ogl->mWaterScene.cymatics = msg.getArgInt32(0) == 1;
         if (msg.getNumArgs() > 1) _ogl->mWaterScene.cymaticJitter = msg.getArgFloat(1);
     });
+    _listener.setListener( "/lambda/liquid/corners",
+    [&]( const osc::Message &msg ){
+        _ogl->mWaterScene.cornerMode = msg.getArgInt32(0) == 1;
+    });
     _listener.setListener( "/lambda/liquid/jitter",
     [&]( const osc::Message &msg ){
         _ogl->mWaterScene.cymaticJitter = msg.getArgFloat(0);

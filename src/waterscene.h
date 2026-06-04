@@ -30,6 +30,8 @@ public:
     // Drop in world XZ coordinates
     void addDrop(float worldX, float worldZ, float radius, float strength);
     void addCymaticDrops(const std::vector<float>& bands, float amplitude);
+    void addCornerDrops(float sub, float low, float mid, float high);
+    void setBoundaryValues(float sub, float low, float mid, float high);
 
 
     bool isReady() const { return mInitialized; }
@@ -66,6 +68,7 @@ public:
 
     // WaterSim passthrough
     bool  cymatics      = false;
+    bool  cornerMode    = false;  // continuous boundary forcing at 4 corners from audio bands
     float damping       = 0.995f;
     float waveSpeed     = 0.5f;   // 2.0 was at the stability boundary → Nyquist oscillation
     float cymaticJitter = 0.5f;   // spatial randomness around walker positions

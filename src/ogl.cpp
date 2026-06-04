@@ -1334,6 +1334,14 @@ void GraphicsRenderer::update() {
 		if (mWaterScene.cymatics) {
 			mWaterScene.addCymaticDrops(mMFCCCoeffs, mAudioAmplitude);
 		}
+		if (mWaterScene.cornerMode && !mWaveformBuffer.empty()) {
+			int n = (int)mWaveformBuffer.size();
+			float s0 = mWaveformBuffer[0];
+			float s1 = mWaveformBuffer[n / 4];
+			float s2 = mWaveformBuffer[n / 2];
+			float s3 = mWaveformBuffer[3 * n / 4];
+			mWaterScene.setBoundaryValues(s0, s1, s2, s3);
+		}
 	}
 
 	// Update pattern animations

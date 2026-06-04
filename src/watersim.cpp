@@ -98,10 +98,14 @@ void WaterSim::update() {
     gl::ScopedGlslProg    shaderScope(mUpdateShader);
 
     float delta = 1.0f / (float)mSize;
-    mUpdateShader->uniform("uHeightTex", 0);
-    mUpdateShader->uniform("uDelta",     vec2(delta, delta));
-    mUpdateShader->uniform("uDamping",   damping);
-    mUpdateShader->uniform("uSpeed",     waveSpeed);
+    mUpdateShader->uniform("uHeightTex",        0);
+    mUpdateShader->uniform("uDelta",            vec2(delta, delta));
+    mUpdateShader->uniform("uDamping",          damping);
+    mUpdateShader->uniform("uSpeed",            waveSpeed);
+    mUpdateShader->uniform("uBoundaryEnabled",  boundaryForcing);
+    mUpdateShader->uniform("uBoundaryValues",   vec4(boundaryValues[0], boundaryValues[1],
+                                                     boundaryValues[2], boundaryValues[3]));
+    mUpdateShader->uniform("uBoundaryRadius",   boundaryRadius);
 
     renderFullQuad(mUpdateShader);
 
@@ -194,6 +198,40 @@ void WaterSim::addCymaticDrops(const std::vector<float>& bands, float amplitude)
 gl::TextureRef WaterSim::getHeightTexture() {
     if (!mInitialized) return nullptr;
     return mSimFbo[mCurrent]->getColorTexture();
+}
+
+void WaterSim::addCornerDrops(float sub, float low, float mid, float high) {
+    if (!mInitialized) return;
+
+    // corners: bottom-left, bottom-right, top-left, top-right (UV space)
+    static const vec2 CORNERS[4] = {
+        { 0.05f, 0.05f },
+        { 0.95f, 0.05f },
+        { 0.05f, 0.95f },
+        { 0.95f, 0.95f },
+    };
+    static float timers[4] = {};
+    static float lastTime  = 0.0f;
+
+    float now = (float)app::getElapsedSeconds();
+    float dt  = now - lastTime;
+    lastTime  = now;
+    if (dt > 0.1f) dt = 0.1f;
+
+    const float bands[4] = { sub, low, mid, high };
+
+    for (int i = 0; i < 4; i++) {
+        timers[i] -= dt;
+        if (timers[i] > 0.0f) continue;
+
+        float strength = glm::clamp(bands[i], 0.0f, 1.0f) * cymaticGain;
+        if (strength > 0.004f) {
+            addDrop(CORNERS[i].x, CORNERS[i].y, 0.04f, strength);
+            timers[i] = 0.03f + (1.0f - glm::clamp(strength * 4.0f, 0.0f, 1.0f)) * 0.2f;
+        } else {
+            timers[i] = 0.03f;
+        }
+    }
 }
 
 float WaterSim::readHeightAt(float u, float v) {
