@@ -135,6 +135,78 @@ public:
 };
 
 // ============================================================================
+// BoidPattern04: Global filled polygon through all boids
+// ============================================================================
+class BoidPattern04 : public BoidPattern {
+public:
+    BoidPattern04() : BoidPattern(4) {}
+
+    string getName() const override { return "Boid Polygon"; }
+    string getDescription() const override { return "Filled polygon with straight edges joining all boids"; }
+
+    BoidRenderConfig getRenderConfig(Boid* boid, int boidIndex, const Boids* boids,
+                                     GraphicsRenderer* renderer) const override {
+        BoidRenderConfig config;
+        config.mode = BoidRenderMode::POLYGON;
+        config.lineWidth = 2.0f;
+
+        // Use pattern color (controllable via OSC) - alpha scales both fill and outline
+        config.color = ColorA(mColor.r, mColor.g, mColor.b, mAlpha);
+
+        return config;
+    }
+};
+
+// ============================================================================
+// BoidPattern05: Convex hull skin wrapped around the whole flock
+// ============================================================================
+class BoidPattern05 : public BoidPattern {
+public:
+    BoidPattern05() : BoidPattern(5) {}
+
+    string getName() const override { return "Boid Hull"; }
+    string getDescription() const override { return "Translucent convex hull skin around the flock, brighter at the silhouette"; }
+
+    BoidRenderConfig getRenderConfig(Boid* boid, int boidIndex, const Boids* boids,
+                                     GraphicsRenderer* renderer) const override {
+        BoidRenderConfig config;
+        config.mode = BoidRenderMode::HULL;
+        config.lineWidth = 1.0f;
+
+        // Use pattern color (controllable via OSC) - alpha scales skin and edges
+        config.color = ColorA(mColor.r, mColor.g, mColor.b, mAlpha);
+
+        return config;
+    }
+};
+
+// ============================================================================
+// BoidPattern06: Metaballs - boids merge into one blobby surface where they cluster
+// ============================================================================
+class BoidPattern06 : public BoidPattern {
+public:
+    BoidPattern06() : BoidPattern(6) {}
+
+    string getName() const override { return "Boid Metaballs"; }
+    string getDescription() const override { return "Blobby isosurface that merges boids where they cluster"; }
+
+    BoidRenderConfig getRenderConfig(Boid* boid, int boidIndex, const Boids* boids,
+                                     GraphicsRenderer* renderer) const override {
+        BoidRenderConfig config;
+        config.mode = BoidRenderMode::METABALLS;
+
+        // Multiplier on the influence radius, which the renderer derives from the
+        // flock's typical neighbour spacing (controllable via OSC)
+        config.size = mSize;
+
+        // Use pattern color (controllable via OSC)
+        config.color = ColorA(mColor.r, mColor.g, mColor.b, mAlpha);
+
+        return config;
+    }
+};
+
+// ============================================================================
 // BoidPattern Factory
 // ============================================================================
 unique_ptr<BoidPattern> BoidPatternFactory::create(int id) {
@@ -143,6 +215,9 @@ unique_ptr<BoidPattern> BoidPatternFactory::create(int id) {
         case 1: return unique_ptr<BoidPattern>(new BoidPattern01());
         case 2: return unique_ptr<BoidPattern>(new BoidPattern02());
         case 3: return unique_ptr<BoidPattern>(new BoidPattern03());
+        case 4: return unique_ptr<BoidPattern>(new BoidPattern04());
+        case 5: return unique_ptr<BoidPattern>(new BoidPattern05());
+        case 6: return unique_ptr<BoidPattern>(new BoidPattern06());
         default: return nullptr;
     }
 }

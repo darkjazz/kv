@@ -41,6 +41,9 @@ enum class BoidRenderMode {
     TRAILS,       // Spheres with trailing particles based on velocity
     CONNECTIONS,  // Lines connecting nearby boids
     SPLINES,      // B-spline curves through boid positions
+    POLYGON,      // Single filled polygon with straight edges through all boids
+    HULL,         // 3D convex hull skin wrapped around the flock
+    METABALLS,    // Blobby isosurface that merges nearby boids
     CUSTOM        // Custom rendering in drawBoids
 };
 
@@ -64,6 +67,7 @@ protected:
     int mId;
     bool mActive = false;
     float mAlpha = 1.0f;
+    float mSize = 1.0f;
     int mColorMap = 0;
     int mAlphaMap = 0;
     Color mColor = Color(1.0f, 1.0f, 1.0f);
@@ -83,11 +87,13 @@ public:
 
     // Color and mapping control
     virtual void setAlpha(float alpha) { mAlpha = alpha; }
+    virtual void setSize(float size) { mSize = size; }
     virtual void setColorMap(int map) { mColorMap = map; }
     virtual void setAlphaMap(int map) { mAlphaMap = map; }
     virtual void setColor(const Color& color) { mColor = color; }
 
     virtual float getAlpha() const { return mAlpha; }
+    virtual float getSize() const { return mSize; }
     virtual int getColorMap() const { return mColorMap; }
     virtual int getAlphaMap() const { return mAlphaMap; }
     virtual Color getColor() const { return mColor; }

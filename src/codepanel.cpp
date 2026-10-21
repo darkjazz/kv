@@ -48,7 +48,7 @@ void CodePanel::createTexture()
 
 	// Add title with different styling
 	if (!title.empty()) {
-		layout.setFont(Font("Courier-Bold", 13));
+		layout.setFont(Font("Courier-Bold", codeFontSize + 2));
 		layout.setColor(Color(1.0f, 0.08f, 0.58f));  // Pink/magenta title
 		layout.addLine(title);
 		layout.addLine("--------------------------------------------------------");

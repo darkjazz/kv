@@ -445,6 +445,14 @@ void OSCMessenger::setUpListener() {
             pattern->setAlpha(msg.getArgFloat(1));
         }
     });
+    _listener.setListener( "/lambda/boids/pattern/size",
+    [&]( const osc::Message &msg ){
+        int patternId = (int)msg.getArgFloat(0);  // Accept float and convert to int
+        BoidPattern* pattern = _ogl->getBoidPattern(patternId);
+        if (pattern) {
+            pattern->setSize(msg.getArgFloat(1));
+        }
+    });
     // Code panel / live coding messages
     _listener.setListener( "/lambda/livecode/activate",
     [&]( const osc::Message &msg ){
@@ -533,6 +541,10 @@ void OSCMessenger::setUpListener() {
             _ogl->mWaterScene.drawSurface = true;
         }
         console() << "WaterScene: " << (on ? "visible" : "hidden") << std::endl;
+    });
+    _listener.setListener( "/lambda/liquid/pool",
+    [&]( const osc::Message &msg ){
+        _ogl->mWaterScene.drawPool = msg.getArgInt32(0) == 1;
     });
     _listener.setListener( "/lambda/liquid/camera",
     [&]( const osc::Message &msg ){

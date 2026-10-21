@@ -60,7 +60,7 @@ using namespace ci::app;
 using namespace std;
 
 const int numPatterns = 24;
-const int numBoidPatterns = 4;
+const int numBoidPatterns = 7;
 
 // Legacy struct for boid patterns (kept for compatibility)
 struct boidPattern {
@@ -142,6 +142,7 @@ public:
 	// New pattern system
 	std::vector<std::unique_ptr<Pattern>> mPatterns;
 	std::vector<std::unique_ptr<BoidPattern>> mBoidPatterns;
+	float mMetaballRadius = 0.0f;  // Smoothed metaball influence radius
 
 	// Legacy accessor for OSC compatibility
 	Pattern* getPattern(int id) {

@@ -12,7 +12,7 @@ kv generates complex geometric patterns driven by three-dimensional cellular aut
 - Self-Organizing Maps (SOM) for pattern learning and clustering
 
 **Rendering**
-- 24 cellular visualization patterns and 4 boid/flocking patterns
+- 24 cellular visualization patterns and 7 boid/flocking patterns
 - GPU-instanced rendering (cubes, spheres, cylinders, lines, planes, points, polygons)
 - Environment mapping with cubemaps
 - Spherical coordinate projections
@@ -77,7 +77,7 @@ src/
   rule.h/cpp         CA rule definitions (faders, life, continuous)
   ogl.h/cpp          OpenGL rendering engine
   pattern.h/cpp      24 visualization patterns
-  boidpattern.h/cpp  4 boid/flocking patterns
+  boidpattern.h/cpp  7 boid/flocking patterns
   boids.h/cpp        Flocking simulation
   osc.h/cpp          OSC network messaging
   codepanel.h/cpp    Live code editing panel

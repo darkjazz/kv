@@ -28,6 +28,8 @@
 #include "cinder/audio/MonitorNode.h"
 #include "cinder/audio/Device.h"
 #include <algorithm>
+#include <set>
+#include <cfloat>
 
 void GraphicsRenderer::setupOgl () {
 
@@ -252,13 +254,23 @@ void GraphicsRenderer::reshape() {
 void GraphicsRenderer::setupPostProcessing() {
 	console() << "Setting up post-processing effects..." << std::endl;
 
+	// FBOs must be sized in physical pixels, not logical points: on a HiDPI/
+	// scaled display mode (contentScale != 1.0) the real GL backbuffer is
+	// points * contentScale, and an FBO sized in raw points ends up smaller
+	// than the actual viewport Cinder binds against it, which is what caused
+	// effects to render into a shrunken, misaligned region on such displays.
+	int pixelWidth  = static_cast<int>(getWindowWidth()  * getWindowContentScale());
+	int pixelHeight = static_cast<int>(getWindowHeight() * getWindowContentScale());
+
 	// Create FBO for rendering scene to texture
 	try {
 		gl::Fbo::Format format;
 		format.setSamples(4);  // 4x MSAA
 		format.setColorTextureFormat(gl::Texture::Format().internalFormat(GL_RGBA8));
-		mFbo = gl::Fbo::create(getWindowWidth(), getWindowHeight(), format);
-		console() << "FBO created: " << getWindowWidth() << "x" << getWindowHeight() << std::endl;
+		mFbo = gl::Fbo::create(pixelWidth, pixelHeight, format);
+		console() << "FBO created: " << pixelWidth << "x" << pixelHeight
+		          << " (window " << getWindowWidth() << "x" << getWindowHeight()
+		          << " @ " << getWindowContentScale() << "x)" << std::endl;
 	}
 	catch (const std::exception& e) {
 		console() << "Error creating FBO: " << e.what() << std::endl;
@@ -270,7 +282,7 @@ void GraphicsRenderer::setupPostProcessing() {
 	try {
 		gl::Fbo::Format accumFormat;
 		accumFormat.setColorTextureFormat(gl::Texture::Format().internalFormat(GL_RGBA8));
-		mAccumFbo = gl::Fbo::create(getWindowWidth(), getWindowHeight(), accumFormat);
+		mAccumFbo = gl::Fbo::create(pixelWidth, pixelHeight, accumFormat);
 		// Clear accumulation buffer initially
 		mAccumFbo->bindFramebuffer();
 		gl::clear(Color(0, 0, 0));
@@ -448,6 +460,21 @@ void GraphicsRenderer::applyEffect() {
 	// Unbind FBO and render to screen
 	mFbo->unbindFramebuffer();
 
+	// DEBUG: log the viewport Cinder restores after unbinding the FBO, so a
+	// stale/incorrect restore (vs. the real window size) shows up directly.
+	{
+		GLint vp[4];
+		glGetIntegerv(GL_VIEWPORT, vp);
+		static int lastLoggedW = -1, lastLoggedH = -1;
+		if (vp[2] != lastLoggedW || vp[3] != lastLoggedH) {
+			console() << "[EFX DEBUG] post-unbind window=" << getWindowWidth() << "x" << getWindowHeight()
+			          << " glViewport=" << vp[0] << "," << vp[1] << "," << vp[2] << "," << vp[3]
+			          << std::endl;
+			lastLoggedW = vp[2];
+			lastLoggedH = vp[3];
+		}
+	}
+
 	// Clear screen with background color
 	gl::clear(Color(_bgr, _bgg, _bgb));
 
@@ -526,7 +553,7 @@ void GraphicsRenderer::applyEffect() {
 	switch (mCurrentEffect) {
 		case EFFECT_BLUR: {
 			// Blur shader needs texel size for kernel sampling
-			shader->uniform("uTexelSize", vec2(1.0f / getWindowWidth(), 1.0f / getWindowHeight()));
+			shader->uniform("uTexelSize", vec2(1.0f / mFbo->getWidth(), 1.0f / mFbo->getHeight()));
 			// params[0] = amount
 			float amount = mEffectParams.size() > 0 ? mEffectParams[0] : 0.5f;
 			shader->uniform("uBlurAmount", amount);
@@ -585,7 +612,7 @@ void GraphicsRenderer::applyEffect() {
 		}
 		case EFFECT_GLOW: {
 			// params[0] = threshold, params[1] = intensity, params[2] = radius
-			shader->uniform("uTexelSize", vec2(1.0f / getWindowWidth(), 1.0f / getWindowHeight()));
+			shader->uniform("uTexelSize", vec2(1.0f / mFbo->getWidth(), 1.0f / mFbo->getHeight()));
 			float threshold = mEffectParams.size() > 0 ? mEffectParams[0] : 0.5f;
 			float intensity = mEffectParams.size() > 1 ? mEffectParams[1] : 1.5f;
 			float radius = mEffectParams.size() > 2 ? mEffectParams[2] : 3.0f;
@@ -598,7 +625,7 @@ void GraphicsRenderer::applyEffect() {
 			// params[0] = blockSize in pixels, params[1] = shape (0=square, 1=hex, 2=tri, 3=circle)
 			float blockSize = mEffectParams.size() > 0 ? mEffectParams[0] : 16.0f;
 			int shape = mEffectParams.size() > 1 ? static_cast<int>(mEffectParams[1]) : 0;
-			shader->uniform("uResolution", vec2(getWindowWidth(), getWindowHeight()));
+			shader->uniform("uResolution", vec2(mFbo->getWidth(), mFbo->getHeight()));
 			shader->uniform("uBlockSize", blockSize);
 			shader->uniform("uShape", shape);
 			break;
@@ -1529,12 +1556,33 @@ void GraphicsRenderer::startDraw() {
 
 	// Bind FBO if any effect is enabled
 	if (mCurrentEffect != EFFECT_NONE) {
-		// Create FBO if it doesn't exist yet
-		if (!mFbo) {
+		// Create FBO if it doesn't exist yet, or recreate if the physical pixel
+		// size has changed since it was created (window resized, moved to a
+		// different display, or content scale changed e.g. HiDPI mode switch)
+		int expectedPixelWidth  = static_cast<int>(getWindowWidth()  * getWindowContentScale());
+		int expectedPixelHeight = static_cast<int>(getWindowHeight() * getWindowContentScale());
+		if (!mFbo || mFbo->getWidth() != expectedPixelWidth || mFbo->getHeight() != expectedPixelHeight) {
 			setupPostProcessing();
 		}
 		if (mFbo) {
 			mFbo->bindFramebuffer();
+
+			// DEBUG: log window/FBO/viewport size whenever they disagree, so
+			// projector-specific mismatches can be diagnosed from the console.
+			{
+				GLint vp[4];
+				glGetIntegerv(GL_VIEWPORT, vp);
+				static int lastLoggedW = -1, lastLoggedH = -1;
+				if (vp[2] != lastLoggedW || vp[3] != lastLoggedH) {
+					console() << "[EFX DEBUG] window=" << getWindowWidth() << "x" << getWindowHeight()
+					          << " contentScale=" << getWindowContentScale()
+					          << " fbo=" << mFbo->getWidth() << "x" << mFbo->getHeight()
+					          << " glViewport=" << vp[0] << "," << vp[1] << "," << vp[2] << "," << vp[3]
+					          << std::endl;
+					lastLoggedW = vp[2];
+					lastLoggedH = vp[3];
+				}
+			}
 
 			// For trails effect, fade existing content instead of clearing
 			if (mCurrentEffect == EFFECT_TRAILS) {
@@ -2614,6 +2662,204 @@ void GraphicsRenderer::mapCodePanel() {
 	codePanel.unbind();
 }
 
+// Incremental 3D convex hull. Returns triangles as index triples into pts,
+// wound counter-clockwise when seen from outside. Empty if pts are degenerate.
+static vector<ivec3> computeConvexHull(const vector<vec3>& pts) {
+	struct Face { ivec3 v; vec3 n; float d; };
+	const float eps = 1e-4f;
+	vector<ivec3> result;
+	int n = (int)pts.size();
+	if (n < 4) return result;
+
+	// Initial tetrahedron from well-separated points
+	int i0 = 0, i1 = -1, i2 = -1, i3 = -1;
+	float best = 0.0f;
+	for (int i = 1; i < n; i++) {
+		float d = glm::dot(pts[i] - pts[i0], pts[i] - pts[i0]);
+		if (d > best) { best = d; i1 = i; }
+	}
+	if (i1 < 0 || best < eps) return result;
+	best = 0.0f;
+	for (int i = 0; i < n; i++) {
+		vec3 c = glm::cross(pts[i1] - pts[i0], pts[i] - pts[i0]);
+		float d = glm::dot(c, c);
+		if (d > best) { best = d; i2 = i; }
+	}
+	if (i2 < 0 || best < eps) return result;
+	vec3 baseN = glm::normalize(glm::cross(pts[i1] - pts[i0], pts[i2] - pts[i0]));
+	best = 0.0f;
+	for (int i = 0; i < n; i++) {
+		float d = fabs(glm::dot(baseN, pts[i] - pts[i0]));
+		if (d > best) { best = d; i3 = i; }
+	}
+	if (i3 < 0 || best < eps) return result;
+
+	vec3 interior = (pts[i0] + pts[i1] + pts[i2] + pts[i3]) * 0.25f;
+	vector<Face> faces;
+	auto makeFace = [&](int a, int b, int c) {
+		Face f;
+		f.v = ivec3(a, b, c);
+		f.n = glm::normalize(glm::cross(pts[b] - pts[a], pts[c] - pts[a]));
+		f.d = glm::dot(f.n, pts[a]);
+		if (glm::dot(f.n, interior) - f.d > 0.0f) {
+			std::swap(f.v.y, f.v.z);
+			f.n = -f.n;
+			f.d = -f.d;
+		}
+		faces.push_back(f);
+	};
+	makeFace(i0, i1, i2);
+	makeFace(i0, i1, i3);
+	makeFace(i0, i2, i3);
+	makeFace(i1, i2, i3);
+
+	for (int p = 0; p < n; p++) {
+		if (p == i0 || p == i1 || p == i2 || p == i3) continue;
+
+		// Collect directed edges of faces visible from p
+		std::set<std::pair<int, int>> visibleEdges;
+		vector<Face> kept;
+		kept.reserve(faces.size());
+		for (const Face& f : faces) {
+			if (glm::dot(f.n, pts[p]) - f.d > eps) {
+				visibleEdges.insert({f.v.x, f.v.y});
+				visibleEdges.insert({f.v.y, f.v.z});
+				visibleEdges.insert({f.v.z, f.v.x});
+			} else {
+				kept.push_back(f);
+			}
+		}
+		if (visibleEdges.empty()) continue;  // p is inside the hull
+
+		// Horizon edges are visible edges whose reverse is not visible;
+		// connecting them to p keeps the outward winding
+		faces.swap(kept);
+		for (const auto& e : visibleEdges) {
+			if (visibleEdges.count({e.second, e.first})) continue;
+			Face f;
+			f.v = ivec3(e.first, e.second, p);
+			f.n = glm::cross(pts[e.second] - pts[e.first], pts[p] - pts[e.first]);
+			float len = glm::length(f.n);
+			if (len < 1e-8f) continue;
+			f.n /= len;
+			f.d = glm::dot(f.n, pts[e.first]);
+			faces.push_back(f);
+		}
+	}
+
+	for (const Face& f : faces) result.push_back(f.v);
+	return result;
+}
+
+// Metaball isosurface via marching tetrahedra. Each point contributes
+// (1 - d^2/R^2)^3 within radius R; the surface is where the summed field
+// equals threshold. Outputs triangle vertices with outward unit normals.
+static void polygonizeMetaballs(const vector<vec3>& pts, float radius, float threshold, int maxRes,
+                                vector<vec3>& outVerts, vector<vec3>& outNormals) {
+	if (pts.empty() || radius <= 0.0f) return;
+
+	// Grid bounds: flock bounding box padded by the influence radius
+	vec3 lo(FLT_MAX), hi(-FLT_MAX);
+	for (const vec3& p : pts) {
+		lo = glm::min(lo, p);
+		hi = glm::max(hi, p);
+	}
+	lo -= vec3(radius);
+	hi += vec3(radius);
+	vec3 extent = hi - lo;
+	float maxExtent = glm::max(extent.x, glm::max(extent.y, extent.z));
+	float cell = glm::max(radius / 5.0f, maxExtent / (float)maxRes);
+	ivec3 res = ivec3(glm::ceil(extent / cell)) + ivec3(1);
+
+	auto index = [&](int x, int y, int z) { return (z * res.y + y) * res.x + x; };
+	vector<float> field(res.x * res.y * res.z, 0.0f);
+
+	// Splat each point into the cells within its radius
+	float r2 = radius * radius;
+	int reach = (int)glm::ceil(radius / cell);
+	for (const vec3& p : pts) {
+		ivec3 c = ivec3((p - lo) / cell);
+		for (int z = glm::max(c.z - reach, 0); z <= glm::min(c.z + reach, res.z - 1); z++)
+		for (int y = glm::max(c.y - reach, 0); y <= glm::min(c.y + reach, res.y - 1); y++)
+		for (int x = glm::max(c.x - reach, 0); x <= glm::min(c.x + reach, res.x - 1); x++) {
+			vec3 d = lo + vec3(x, y, z) * cell - p;
+			float q = glm::dot(d, d) / r2;
+			if (q < 1.0f) {
+				float f = 1.0f - q;
+				field[index(x, y, z)] += f * f * f;
+			}
+		}
+	}
+
+	// Field gradient by central differences; the surface normal points down it
+	auto gradient = [&](int x, int y, int z) {
+		auto at = [&](int i, int j, int k) {
+			return field[index(glm::clamp(i, 0, res.x - 1), glm::clamp(j, 0, res.y - 1), glm::clamp(k, 0, res.z - 1))];
+		};
+		return vec3(at(x + 1, y, z) - at(x - 1, y, z),
+		            at(x, y + 1, z) - at(x, y - 1, z),
+		            at(x, y, z + 1) - at(x, y, z - 1));
+	};
+
+	// Six tetrahedra around the cube's 0-7 diagonal (corner = x + 2y + 4z),
+	// which splits shared faces identically in neighbouring cubes
+	static const int tets[6][4] = {
+		{0, 7, 1, 3}, {0, 7, 3, 2}, {0, 7, 2, 6},
+		{0, 7, 6, 4}, {0, 7, 4, 5}, {0, 7, 5, 1}
+	};
+
+	vec3 cornerPos[8], cornerGrad[8];
+	float cornerVal[8];
+	auto edgePoint = [&](int a, int b, vec3& pos, vec3& nrm) {
+		float t = (threshold - cornerVal[a]) / (cornerVal[b] - cornerVal[a]);
+		pos = glm::mix(cornerPos[a], cornerPos[b], t);
+		vec3 g = -glm::mix(cornerGrad[a], cornerGrad[b], t);
+		float len = glm::length(g);
+		nrm = len > 1e-6f ? g / len : vec3(0.0f, 1.0f, 0.0f);
+	};
+	auto emit = [&](int a0, int b0, int a1, int b1, int a2, int b2) {
+		vec3 p, n;
+		edgePoint(a0, b0, p, n); outVerts.push_back(p); outNormals.push_back(n);
+		edgePoint(a1, b1, p, n); outVerts.push_back(p); outNormals.push_back(n);
+		edgePoint(a2, b2, p, n); outVerts.push_back(p); outNormals.push_back(n);
+	};
+
+	for (int z = 0; z < res.z - 1; z++)
+	for (int y = 0; y < res.y - 1; y++)
+	for (int x = 0; x < res.x - 1; x++) {
+		int inside = 0;
+		for (int c = 0; c < 8; c++) {
+			int cx = x + (c & 1), cy = y + ((c >> 1) & 1), cz = z + ((c >> 2) & 1);
+			cornerVal[c] = field[index(cx, cy, cz)];
+			if (cornerVal[c] >= threshold) inside++;
+		}
+		if (inside == 0 || inside == 8) continue;  // cube doesn't cross the surface
+
+		for (int c = 0; c < 8; c++) {
+			int cx = x + (c & 1), cy = y + ((c >> 1) & 1), cz = z + ((c >> 2) & 1);
+			cornerPos[c] = lo + vec3(cx, cy, cz) * cell;
+			cornerGrad[c] = gradient(cx, cy, cz);
+		}
+
+		for (const auto& tet : tets) {
+			int in[4], out[4], numIn = 0, numOut = 0;
+			for (int v : tet) {
+				if (cornerVal[v] >= threshold) in[numIn++] = v;
+				else out[numOut++] = v;
+			}
+			if (numIn == 1) {
+				emit(in[0], out[0], in[0], out[1], in[0], out[2]);
+			} else if (numIn == 3) {
+				emit(out[0], in[0], out[0], in[1], out[0], in[2]);
+			} else if (numIn == 2) {
+				// Quad across the four crossing edges, split into two triangles
+				emit(in[0], out[0], in[0], out[1], in[1], out[1]);
+				emit(in[0], out[0], in[1], out[1], in[1], out[0]);
+			}
+		}
+	}
+}
+
 void GraphicsRenderer::drawBoids() {
 	// Early exit if no boids
 	if (!boids || boids->numBoids() == 0) return;
@@ -2743,8 +2989,11 @@ void GraphicsRenderer::drawBoids() {
 					break;
 				}
 
-				case BoidRenderMode::SPLINES: {
-					// Spline rendering is handled below after collecting all boid positions
+				case BoidRenderMode::SPLINES:
+				case BoidRenderMode::POLYGON:
+				case BoidRenderMode::HULL:
+				case BoidRenderMode::METABALLS: {
+					// Handled below after collecting all boid positions
 					break;
 				}
 
@@ -2815,6 +3064,145 @@ void GraphicsRenderer::drawBoids() {
 				vec3 p1 = splineZ.getPosition(t1);
 				addLineInstance(p0, p1, colorZ, 5.0f);
 			}
+		}
+	}
+
+	// Handle POLYGON mode - one filled polygon with straight edges through all boids
+	for (const auto& pattern : mBoidPatterns) {
+		if (!pattern->isActive()) continue;
+		if (pattern->getId() != 4 || boids->numBoids() < 3) continue;
+
+		BoidRenderConfig config = pattern->getRenderConfig(boids->getBoidAtIndex(0), 0, boids, this);
+
+		vector<vec3> points;
+		vec3 centroid(0.0f);
+		for (int i = 0; i < boids->numBoids(); i++) {
+			vec3 p = boids->getBoidAtIndex(i)->pos - boidOffset;
+			points.push_back(p);
+			centroid += p;
+		}
+		centroid /= (float)points.size();
+
+		// Order vertices by angle around the centroid in the camera's view plane,
+		// so the polygon never self-intersects from the viewer's point of view
+		vec3 camRight, camUp;
+		mCam.getBillboardVectors(&camRight, &camUp);
+		std::sort(points.begin(), points.end(), [&](const vec3& a, const vec3& b) {
+			vec3 da = a - centroid;
+			vec3 db = b - centroid;
+			return atan2(glm::dot(da, camUp), glm::dot(da, camRight))
+			     < atan2(glm::dot(db, camUp), glm::dot(db, camRight));
+		});
+
+		// Fill: triangle fan from the centroid, fading towards the centre
+		ColorA rimColor = config.color;
+		rimColor.a *= 0.5f;
+		ColorA centerColor = config.color;
+		centerColor.a *= 0.2f;
+		for (size_t i = 0; i < points.size(); i++) {
+			const vec3& p0 = points[i];
+			const vec3& p1 = points[(i + 1) % points.size()];
+			addTriangleInstance(centroid, p0, p1, centerColor, rimColor, rimColor);
+			addLineInstance(p0, p1, config.color, config.lineWidth);
+		}
+	}
+
+	// Handle HULL mode - translucent convex hull skin around the whole flock
+	for (const auto& pattern : mBoidPatterns) {
+		if (!pattern->isActive()) continue;
+		if (pattern->getId() != 5 || boids->numBoids() < 4) continue;
+
+		BoidRenderConfig config = pattern->getRenderConfig(boids->getBoidAtIndex(0), 0, boids, this);
+
+		vector<vec3> points;
+		for (int i = 0; i < boids->numBoids(); i++) {
+			points.push_back(boids->getBoidAtIndex(i)->pos - boidOffset);
+		}
+
+		vector<ivec3> hull = computeConvexHull(points);
+		if (hull.empty()) continue;
+
+		// Smooth vertex normals by averaging the normals of adjacent faces
+		vector<vec3> normals(points.size(), vec3(0.0f));
+		for (const ivec3& t : hull) {
+			vec3 fn = glm::cross(points[t.y] - points[t.x], points[t.z] - points[t.x]);
+			normals[t.x] += fn;
+			normals[t.y] += fn;
+			normals[t.z] += fn;
+		}
+
+		// Fresnel-style shading: faint where the skin faces the camera,
+		// bright along the silhouette
+		vec3 eye = mCam.getEyePoint();
+		auto shade = [&](int idx) {
+			vec3 nrm = glm::dot(normals[idx], normals[idx]) > 0.0f ? glm::normalize(normals[idx]) : vec3(0.0f, 1.0f, 0.0f);
+			float facing = fabs(glm::dot(nrm, glm::normalize(eye - points[idx])));
+			float rim = pow(1.0f - facing, 2.0f);
+			ColorA c = config.color;
+			c.a *= 0.05f + 0.6f * rim;
+			return c;
+		};
+
+		ColorA edgeColor = config.color;
+		edgeColor.a *= 0.35f;
+		for (const ivec3& t : hull) {
+			addTriangleInstance(points[t.x], points[t.y], points[t.z], shade(t.x), shade(t.y), shade(t.z));
+			// Each edge is shared by two faces; draw it once
+			if (t.x < t.y) addLineInstance(points[t.x], points[t.y], edgeColor, config.lineWidth);
+			if (t.y < t.z) addLineInstance(points[t.y], points[t.z], edgeColor, config.lineWidth);
+			if (t.z < t.x) addLineInstance(points[t.z], points[t.x], edgeColor, config.lineWidth);
+		}
+	}
+
+	// Handle METABALLS mode - boids merge into one blobby surface where they cluster
+	for (const auto& pattern : mBoidPatterns) {
+		if (!pattern->isActive()) continue;
+		if (pattern->getId() != 6) continue;
+
+		BoidRenderConfig config = pattern->getRenderConfig(boids->getBoidAtIndex(0), 0, boids, this);
+
+		vector<vec3> points;
+		for (int i = 0; i < boids->numBoids(); i++) {
+			points.push_back(boids->getBoidAtIndex(i)->pos - boidOffset);
+		}
+
+		// Size blobs from the median nearest-neighbour distance, so boids closer
+		// than typical merge and ones further apart split off at any flock scale.
+		// Two blobs join when their boids are within ~1.37x the radius.
+		vector<float> nearest(points.size(), FLT_MAX);
+		for (size_t i = 0; i < points.size(); i++) {
+			for (size_t j = i + 1; j < points.size(); j++) {
+				vec3 d = points[j] - points[i];
+				float d2 = glm::dot(d, d);
+				nearest[i] = glm::min(nearest[i], d2);
+				nearest[j] = glm::min(nearest[j], d2);
+			}
+		}
+		float targetRadius = 6.0f;
+		if (points.size() > 1) {
+			std::nth_element(nearest.begin(), nearest.begin() + nearest.size() / 2, nearest.end());
+			targetRadius = sqrt(nearest[nearest.size() / 2]) * config.size;
+		}
+
+		// Ease towards the target so the blobs don't pulse frame to frame
+		if (mMetaballRadius <= 0.0f) mMetaballRadius = targetRadius;
+		mMetaballRadius += (targetRadius - mMetaballRadius) * 0.05f;
+
+		vector<vec3> verts, normals;
+		polygonizeMetaballs(points, mMetaballRadius, 0.3f, 48, verts, normals);
+
+		// Same rim shading as the hull: faint face-on, bright at the silhouette
+		vec3 eye = mCam.getEyePoint();
+		auto shade = [&](size_t idx) {
+			float facing = fabs(glm::dot(normals[idx], glm::normalize(eye - verts[idx])));
+			float rim = pow(1.0f - facing, 2.0f);
+			ColorA c = config.color;
+			c.a *= 0.1f + 0.7f * rim;
+			return c;
+		};
+
+		for (size_t i = 0; i + 2 < verts.size(); i += 3) {
+			addTriangleInstance(verts[i], verts[i + 1], verts[i + 2], shade(i), shade(i + 1), shade(i + 2));
 		}
 	}
 
