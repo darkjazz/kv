@@ -66,6 +66,19 @@ void World::initVars() {
 	somActivated = false;
 	
 	symmetry = ZERO;
+
+	_shapeA = _shapeB = SHAPE_CUBE;
+	_shapeMorph = 0.0f;
+	_shapeMorphSpeed = 0.0f;
+	_shapeRotSpeed = 0.0f;
+	_shapeScale = 1.0f;
+	_shapeTime = 0.0f;
+	_shapeRot = 0.0f;
+	_shapeRandom = false;
+	_shapeIdentity = true;
+	_shapeM = 0.0f;
+	_shapeCa = _shapeCb = 1.0f;
+	_shapeSa = _shapeSb = 0.0f;
 }
 
 void World::init(int sizeX, int sizeY, int sizeZ, int vectorSize) {
@@ -117,7 +130,7 @@ void World::init(int sizeX, int sizeY, int sizeZ, int vectorSize) {
 	}
 	
 	_bmu = &cells[_sizeX/2][_sizeY/2][_sizeZ/2];
-	
+
 	cellsInitialized = true;
 	
 			
@@ -560,4 +573,115 @@ void World::setCells(int x, int y, int z) {
 	}
 	
 	
+}
+
+
+/* ****** EVOLVING VISUAL SHAPE ****** */
+
+static inline float smoothstepf(float t) { t = t < 0.f ? 0.f : (t > 1.f ? 1.f : t); return t * t * (3.f - 2.f * t); }
+static inline float sqrt0(float v) { return sqrtf(v > 0.f ? v : 0.f); }
+
+// cube -> ball, keeps cell spacing roughly even
+static inline vec3 cubeToSphere(const vec3& p) {
+	float x2 = p.x * p.x, y2 = p.y * p.y, z2 = p.z * p.z;
+	return vec3(p.x * sqrt0(1.f - y2 * 0.5f - z2 * 0.5f + y2 * z2 / 3.f),
+	            p.y * sqrt0(1.f - z2 * 0.5f - x2 * 0.5f + z2 * x2 / 3.f),
+	            p.z * sqrt0(1.f - x2 * 0.5f - y2 * 0.5f + x2 * y2 / 3.f));
+}
+
+void World::setShape(Shape a, Shape b, float morph) {
+	_shapeA = (Shape)wrapi((int)a, 0, NUM_SHAPES - 1);
+	_shapeB = (Shape)wrapi((int)b, 0, NUM_SHAPES - 1);
+	_shapeMorph = morph < 0.f ? 0.f : (morph > 1.f ? 1.f : morph);
+}
+
+void World::setShapeEvolve(float morphSpeed, float rotSpeed, bool randomOrder) {
+	_shapeMorphSpeed = morphSpeed;
+	_shapeRotSpeed = rotSpeed;
+	_shapeRandom = randomOrder;
+}
+
+vec3 World::shapeMap(Shape s, const vec3& p) const {
+	const float t = _shapeTime;
+	switch (s) {
+		case SHAPE_SPHERE:
+			return cubeToSphere(p);
+		case SHAPE_TORUS: {
+			// x and z wrap around the ring and the tube, matching the CA's wrap-around edges
+			float u = p.x * (float)M_PI, v = p.z * (float)M_PI;
+			float r = 0.12f + 0.3f * (p.y * 0.5f + 0.5f);
+			float R = 0.68f;
+			float ring = R + r * cosf(v);
+			return vec3(ring * cosf(u), r * sinf(v), ring * sinf(u));
+		}
+		case SHAPE_OCTAHEDRON: {
+			float m = fmaxf(fabsf(p.x), fmaxf(fabsf(p.y), fabsf(p.z)));
+			float l1 = fabsf(p.x) + fabsf(p.y) + fabsf(p.z);
+			return l1 > 1e-5f ? p * (m / l1) * 1.25f : p;
+		}
+		case SHAPE_CYLINDER:
+			return vec3(p.x * sqrt0(1.f - p.z * p.z * 0.5f), p.y, p.z * sqrt0(1.f - p.x * p.x * 0.5f));
+		case SHAPE_TWIST: {
+			float a = p.y * (1.4f + 0.8f * sinf(t * 0.37f));
+			float c = cosf(a), sn = sinf(a);
+			vec3 q = cubeToSphere(vec3(p.x, 0.f, p.z));
+			q *= 0.85f;
+			return vec3(c * q.x - sn * q.z, p.y, sn * q.x + c * q.z);
+		}
+		case SHAPE_BLOB: {
+			vec3 q = cubeToSphere(p);
+			float n = sinf(3.1f * p.x + t) * sinf(2.7f * p.y + 1.3f * t) * sinf(3.3f * p.z + 0.7f * t);
+			n += 0.5f * sinf(5.3f * p.y - 1.1f * t) * sinf(4.9f * p.z + 0.9f * t) * sinf(5.1f * p.x - 0.5f * t);
+			return q * (1.f + 0.3f * n);
+		}
+		case SHAPE_SHELL: {
+			// nested cube shells become nested spherical shells around a hollow core
+			vec3 q = cubeToSphere(p);
+			float len = glm::length(q);
+			vec3 dir = len > 1e-5f ? q / len : vec3(0.f, 1.f, 0.f);
+			float m = fmaxf(fabsf(p.x), fmaxf(fabsf(p.y), fabsf(p.z)));
+			return dir * (0.5f + 0.5f * m) * (1.f + 0.06f * sinf(t * 1.3f));
+		}
+		case SHAPE_WAVE:
+			return p + 0.22f * vec3(sinf(3.f * p.y + t), sinf(3.f * p.z + 1.3f * t), sinf(3.f * p.x + 0.7f * t));
+		case SHAPE_CUBE:
+		default:
+			return p;
+	}
+}
+
+void World::updateShape() {
+	_shapeTime += 0.02f;
+	_shapeRot += _shapeRotSpeed;
+	if (_shapeMorphSpeed > 0.f) {
+		_shapeMorph += _shapeMorphSpeed;
+		if (_shapeMorph >= 1.f) {
+			_shapeMorph = 0.f;
+			_shapeA = _shapeB;
+			int next;
+			if (_shapeRandom) {
+				do { next = (int)(randf() * NUM_SHAPES) % NUM_SHAPES; } while (next == (int)_shapeA);
+			}
+			else {
+				next = wrapi((int)_shapeA + 1, 0, NUM_SHAPES - 1);
+			}
+			_shapeB = (Shape)next;
+		}
+	}
+
+	_shapeM = smoothstepf(_shapeMorph);
+	_shapeCa = cosf(_shapeRot);        _shapeSa = sinf(_shapeRot);
+	_shapeCb = cosf(_shapeRot * 0.61f); _shapeSb = sinf(_shapeRot * 0.61f);
+	_shapeIdentity = _shapeA == SHAPE_CUBE && (_shapeB == SHAPE_CUBE || _shapeM <= 0.f)
+	                 && _shapeScale == 1.f && _shapeRot == 0.f;
+}
+
+vec3 World::shapeWarp(const vec3& p) const {
+	if (_shapeIdentity) return p;
+	vec3 q = shapeMap(_shapeA, p);
+	if (_shapeM > 0.f) q = glm::mix(q, shapeMap(_shapeB, p), _shapeM);
+	q *= _shapeScale;
+	// tumble: rotate around Y then X
+	vec3 r(_shapeCa * q.x + _shapeSa * q.z, q.y, -_shapeSa * q.x + _shapeCa * q.z);
+	return vec3(r.x, _shapeCb * r.y - _shapeSb * r.z, _shapeSb * r.y + _shapeCb * r.z);
 }

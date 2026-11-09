@@ -179,12 +179,21 @@ public:
 
 	// Instance rendering methods
 	void clearInstanceData();
+
+	// While true, instance positions are warped by the world's visual shape (cells only)
+	void setCellWarp(bool on) { mWarpCells = on && ptrWorld && !ptrWorld->shapeIdentity(); }
+	vec3 warp(const vec3& pos) const {
+		if (!mWarpCells) return pos;
+		vec3 h(hx, hy, hz);
+		return ptrWorld->shapeWarp(pos / h) * h;
+	}
 	void addCubeInstance(const vec3& position, const ColorA& color, const vec3& scale, const gl::TextureRef& texture = nullptr);
 	void addSphereInstance(const vec3& position, const ColorA& color, float radius, int patternId = -1);
 	void addCylinderInstance(const vec3& position, const ColorA& color, const vec3& scale, const quat& rotation);
 	void addLineInstance(const vec3& start, const vec3& end, const ColorA& color, float width = 1.0f);
 	void addSphericalQuad(float theta, float phi, float rho, const ivec2& gridPos, const ColorA cornerColors[4], float cellState = 1.0f);
 	void addPlaneInstance(const vec3& position, const vec3& size, const ColorA& color, int planeType, bool wireframe);
+	static void planeCorners(const vec3& p, const vec3& size, int planeType, vec3 v[4], vec3& normal);
 	void addPointInstance(const vec3& position, const ColorA& color, float size = 1.0f);
 	void drawCubeInstances();
 	void drawSphereInstances();
@@ -325,6 +334,7 @@ private:
 	World* ptrWorld;
 	float _bgr, _bgg, _bgb;
 	float hx, hy, hz;
+	bool mWarpCells = false;
 	float blocx, blocy, blocz;
 	float mLastTime = 0.0f;
 
@@ -365,6 +375,9 @@ private:
 		ColorA color;
 		int planeType;  // 0=XY, 1=YZ, 2=XZ
 		bool wireframe; // true for wireframe, false for filled
+		bool warped = false;   // corners holds warped vertices
+		vec3 corners[4];
+		vec3 normal;
 	};
 	std::vector<PlaneInstanceData> mPlaneInstances;
 

@@ -46,6 +46,9 @@ struct Index3D { int x, y, z; Index3D() : x(0), y(0), z(0) {} };
 enum R { CONT, LIFE, GEN };
 enum Interpolation { NONE, LINEAR, COSINE };
 enum Sym { ZERO, X, Y, Z, XY, YZ, ZX, XYZ, QX, QY, QZ, TOTAL };
+// Visual shapes the cubic grid is warped into when drawn (the CA itself stays a cube)
+enum Shape { SHAPE_CUBE, SHAPE_SPHERE, SHAPE_TORUS, SHAPE_OCTAHEDRON, SHAPE_CYLINDER,
+             SHAPE_TWIST, SHAPE_BLOB, SHAPE_SHELL, SHAPE_WAVE, NUM_SHAPES };
 
 struct State { 
 	int x, y, z, index;
@@ -172,8 +175,26 @@ public:
 	
 	int interpPhase();
 	int interpCount();
-	
+
+	// Evolving visual shape: the cube grid is drawn warped into another shape.
+	void setShape(Shape a, Shape b, float morph);
+	void setShapeEvolve(float morphSpeed, float rotSpeed, bool randomOrder);
+	void setShapeScale(float scale) { _shapeScale = scale > 0.01f ? scale : 0.01f; }
+	void updateShape();                 // advance evolution, call once per frame
+	bool shapeIdentity() const { return _shapeIdentity; }
+	vec3 shapeWarp(const vec3& p) const; // p normalised to [-1,1]^3 -> warped, same space
+	Shape shapeA() const { return _shapeA; }
+	Shape shapeB() const { return _shapeB; }
+	float shapeMorph() const { return _shapeMorph; }
+
 private:
+	vec3 shapeMap(Shape s, const vec3& p) const;
+
+	Shape _shapeA, _shapeB;
+	float _shapeMorph, _shapeMorphSpeed, _shapeRotSpeed, _shapeScale, _shapeTime, _shapeRot;
+	float _shapeM, _shapeCa, _shapeSa, _shapeCb, _shapeSb;
+	bool _shapeRandom, _shapeIdentity;
+
 	void clear();
 	void initVars();
 	

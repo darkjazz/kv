@@ -124,6 +124,8 @@ void kvApp::draw()
 
         int x, y, z;
         world->prepareNext();
+        world->updateShape();
+        ogl->setCellWarp(true);
 
         for (x = 0; x < world->sizeX(); x++) {
             for (y = 0; y < world->sizeY(); y++) {
@@ -144,6 +146,7 @@ void kvApp::draw()
             }
         }
 
+        ogl->setCellWarp(false);
         world->finalizeNext();
                 
     }

@@ -1483,29 +1483,29 @@ void GraphicsRenderer::clearInstanceData() {
 }
 
 void GraphicsRenderer::addCubeInstance(const vec3& position, const ColorA& color, const vec3& scale, const gl::TextureRef& texture) {
-	mCubePositions.push_back(position);
+	mCubePositions.push_back(warp(position));
 	mCubeColors.push_back(color);
 	mCubeScales.push_back(scale);
 	mCubeTextures.push_back(texture);
 }
 
 void GraphicsRenderer::addSphereInstance(const vec3& position, const ColorA& color, float radius, int patternId) {
-	mSpherePositions.push_back(position);
+	mSpherePositions.push_back(warp(position));
 	mSphereColors.push_back(color);
 	mSphereRadii.push_back(radius);
 	mSpherePatternIds.push_back(patternId);
 }
 
 void GraphicsRenderer::addCylinderInstance(const vec3& position, const ColorA& color, const vec3& scale, const quat& rotation) {
-	mCylinderPositions.push_back(position);
+	mCylinderPositions.push_back(warp(position));
 	mCylinderColors.push_back(color);
 	mCylinderScales.push_back(scale);
 	mCylinderRotations.push_back(rotation);
 }
 
 void GraphicsRenderer::addLineInstance(const vec3& start, const vec3& end, const ColorA& color, float width) {
-	mLineStarts.push_back(start);
-	mLineEnds.push_back(end);
+	mLineStarts.push_back(warp(start));
+	mLineEnds.push_back(warp(end));
 	mLineColors.push_back(color);
 	mLineWidths.push_back(width);
 }
@@ -1523,6 +1523,23 @@ void GraphicsRenderer::addSphericalQuad(float theta, float phi, float rho, const
 	mSphericalQuads.push_back(quad);
 }
 
+void GraphicsRenderer::planeCorners(const vec3& p, const vec3& size, int planeType, vec3 v[4], vec3& normal) {
+	switch (planeType) {
+		case 0: // XY plane (Z fixed) - normal points toward camera (-Z)
+			v[0] = p; v[1] = p + vec3(size.x, 0, 0); v[2] = p + vec3(size.x, size.y, 0); v[3] = p + vec3(0, size.y, 0);
+			normal = vec3(0, 0, -1);
+			break;
+		case 1: // YZ plane (X fixed) - normal points toward camera (-X)
+			v[0] = p; v[1] = p + vec3(0, size.y, 0); v[2] = p + vec3(0, size.y, size.z); v[3] = p + vec3(0, 0, size.z);
+			normal = vec3(-1, 0, 0);
+			break;
+		default: // XZ plane (Y fixed) - normal points toward camera (-Y)
+			v[0] = p; v[1] = p + vec3(size.x, 0, 0); v[2] = p + vec3(size.x, 0, size.z); v[3] = p + vec3(0, 0, size.z);
+			normal = vec3(0, -1, 0);
+			break;
+	}
+}
+
 void GraphicsRenderer::addPlaneInstance(const vec3& position, const vec3& size, const ColorA& color, int planeType, bool wireframe) {
 	PlaneInstanceData plane;
 	plane.position = position;
@@ -1530,20 +1547,31 @@ void GraphicsRenderer::addPlaneInstance(const vec3& position, const vec3& size, 
 	plane.color = color;
 	plane.planeType = planeType;
 	plane.wireframe = wireframe;
+	if (mWarpCells) {
+		vec3 v[4], n;
+		planeCorners(position, size, planeType, v, n);
+		vec3 crossOrig = glm::cross(v[1] - v[0], v[3] - v[0]);
+		for (int i = 0; i < 4; i++) plane.corners[i] = warp(v[i]);
+		vec3 crossWarp = glm::cross(plane.corners[1] - plane.corners[0], plane.corners[3] - plane.corners[0]);
+		float len = glm::length(crossWarp);
+		float sgn = glm::dot(crossOrig, n) >= 0.f ? 1.f : -1.f;
+		plane.normal = len > 1e-6f ? crossWarp * (sgn / len) : n;
+		plane.warped = true;
+	}
 	mPlaneInstances.push_back(plane);
 }
 
 void GraphicsRenderer::addPolygonInstance(const vec3 vertices[4], const ColorA colors[4]) {
 	PolygonInstanceData polygon;
 	for (int i = 0; i < 4; i++) {
-		polygon.vertices[i] = vertices[i];
+		polygon.vertices[i] = warp(vertices[i]);
 		polygon.colors[i] = colors[i];
 	}
 	mPolygonInstances.push_back(polygon);
 }
 
 void GraphicsRenderer::addPointInstance(const vec3& position, const ColorA& color, float size) {
-	mPointPositions.push_back(position);
+	mPointPositions.push_back(warp(position));
 	mPointColors.push_back(color);
 	mPointSizes.push_back(size);
 }
@@ -2311,29 +2339,14 @@ void GraphicsRenderer::drawPlaneInstances() {
 		vec3 v0, v1, v2, v3;
 		vec3 normal;
 
-		// Calculate corners and normal based on plane type
-		switch (plane.planeType) {
-			case 0: // XY plane (Z fixed) - normal points toward camera (-Z)
-				v0 = plane.position;
-				v1 = plane.position + vec3(plane.size.x, 0, 0);
-				v2 = plane.position + vec3(plane.size.x, plane.size.y, 0);
-				v3 = plane.position + vec3(0, plane.size.y, 0);
-				normal = vec3(0, 0, -1);
-				break;
-			case 1: // YZ plane (X fixed) - normal points toward camera (-X)
-				v0 = plane.position;
-				v1 = plane.position + vec3(0, plane.size.y, 0);
-				v2 = plane.position + vec3(0, plane.size.y, plane.size.z);
-				v3 = plane.position + vec3(0, 0, plane.size.z);
-				normal = vec3(-1, 0, 0);
-				break;
-			case 2: // XZ plane (Y fixed) - normal points toward camera (-Y)
-				v0 = plane.position;
-				v1 = plane.position + vec3(plane.size.x, 0, 0);
-				v2 = plane.position + vec3(plane.size.x, 0, plane.size.z);
-				v3 = plane.position + vec3(0, 0, plane.size.z);
-				normal = vec3(0, -1, 0);
-				break;
+		if (plane.warped) {
+			v0 = plane.corners[0]; v1 = plane.corners[1]; v2 = plane.corners[2]; v3 = plane.corners[3];
+			normal = plane.normal;
+		}
+		else {
+			vec3 c[4];
+			planeCorners(plane.position, plane.size, plane.planeType, c, normal);
+			v0 = c[0]; v1 = c[1]; v2 = c[2]; v3 = c[3];
 		}
 
 		if (plane.wireframe) {
@@ -2522,9 +2535,9 @@ void GraphicsRenderer::drawPointInstances() {
 
 void GraphicsRenderer::addTriangleInstance(const vec3& v0, const vec3& v1, const vec3& v2,
                                            const ColorA& c0, const ColorA& c1, const ColorA& c2) {
-	mTriangleVertices.push_back(v0);
-	mTriangleVertices.push_back(v1);
-	mTriangleVertices.push_back(v2);
+	mTriangleVertices.push_back(warp(v0));
+	mTriangleVertices.push_back(warp(v1));
+	mTriangleVertices.push_back(warp(v2));
 	mTriangleColors.push_back(c0);
 	mTriangleColors.push_back(c1);
 	mTriangleColors.push_back(c2);

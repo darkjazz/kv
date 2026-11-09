@@ -173,6 +173,20 @@ void OSCMessenger::setUpListener() {
     [&]( const osc::Message &msg ){
         _world->stopQuery();
     });
+    // shape A, shape B, morph 0..1
+    _listener.setListener( "/lambda/world/shape",
+    [&]( const osc::Message &msg ){
+        _world->setShape((Shape)msg.getArgInt32(0), (Shape)msg.getArgInt32(1), msg.getArgFloat(2));
+    });
+    // morph speed per generation (0 = frozen), rotation speed (radians/gen), random order (0/1)
+    _listener.setListener( "/lambda/world/shape/evolve",
+    [&]( const osc::Message &msg ){
+        _world->setShapeEvolve(msg.getArgFloat(0), msg.getArgFloat(1), msg.getArgInt32(2) == 1);
+    });
+    _listener.setListener( "/lambda/world/shape/scale",
+    [&]( const osc::Message &msg ){
+        _world->setShapeScale(msg.getArgFloat(0));
+    });
     _listener.setListener( "/lambda/world/symmetry",
     [&]( const osc::Message &msg ){
         _world->symmetry = (Sym)msg.getArgInt32(0);
